@@ -99,18 +99,23 @@ class SignalSnapshot:
     errors: list[str] = field(default_factory=list)
 
     def to_feature_dict(self) -> dict:
-        """Flat dict of all features for ML model input."""
+        """Flat dict of all features for ML model input.
+
+        IMPORTANT: Feature names must exactly match what ml/features.py produces
+        during training. The ML model expects these specific keys.
+        """
         features = {}
 
-        # Global drivers
+        # Global signals — include ALL (not filtered by sector)
+        # ML model trains on all globals for every instrument
         for k, v in self.global_signals.items():
             features[f"global_{k}"] = v
 
-        # Sector drivers
+        # Sector signals (additional context)
         for k, v in self.sector_signals.items():
             features[f"sector_{k}"] = v
 
-        # Instrument technicals
+        # Instrument technicals — must match ml/features.py::build_instrument_features()
         features.update({
             "price_change_pct": self.change_pct,
             "volume_ratio": self.volume_ratio,
@@ -118,6 +123,8 @@ class SignalSnapshot:
             "macd_histogram": self.macd_histogram,
             "bb_position": self.bb_position,
             "atr_14": self.atr_14,
+            "ema_9": self.ema_9,       # raw values needed by ML
+            "ema_21": self.ema_21,
             "ema_crossover": 1.0 if self.ema_9 > self.ema_21 else -1.0 if self.ema_9 < self.ema_21 else 0.0,
             "returns_1d": self.returns_1d,
             "returns_5d": self.returns_5d,
@@ -203,7 +210,7 @@ class SignalCollector:
             for name, sym in symbols.items():
                 try:
                     t = yf.Ticker(sym)
-                    hist = t.history(period="5d")
+                    hist = t.history(period="10d")
                     if len(hist) >= 2:
                         close = float(hist["Close"].iloc[-1])
                         prev = float(hist["Close"].iloc[-2])
@@ -211,17 +218,28 @@ class SignalCollector:
                         results[f"{name}_close"] = close
                         results[f"{name}_prev"] = prev
                         results[f"{name}_change"] = round(change, 3)
+
+                        # 5-day change (matches ML training feature)
+                        if len(hist) >= 6:
+                            prev5 = float(hist["Close"].iloc[-6])
+                            change5 = (close - prev5) / prev5 * 100 if prev5 else 0
+                            results[f"{name}_5d"] = round(change5, 3)
+                        else:
+                            results[f"{name}_5d"] = 0.0
                     elif len(hist) == 1:
                         results[f"{name}_close"] = float(hist["Close"].iloc[-1])
                         results[f"{name}_change"] = 0.0
+                        results[f"{name}_5d"] = 0.0
                 except Exception:
                     results[f"{name}_close"] = 0.0
                     results[f"{name}_change"] = 0.0
+                    results[f"{name}_5d"] = 0.0
 
             # Derived signals
             gold_c = results.get("gold_close", 0)
             silver_c = results.get("silver_close", 0)
             results["gold_silver_ratio"] = round(gold_c / silver_c, 2) if silver_c > 0 else 0
+            results["gs_ratio_signal"] = (1.0 if results["gold_silver_ratio"] > 85 else -1.0 if results["gold_silver_ratio"] < 70 else 0.0) if silver_c > 0 else 0.0
 
             return results
 
@@ -569,11 +587,9 @@ class SignalCollector:
                 is_market_open=session == MarketSession.REGULAR,
             )
 
-            # Global signals (filtered by what this instrument cares about)
-            snap.global_signals = {
-                k: v for k, v in global_data.items()
-                if any(driver in k for driver in inst.global_drivers)
-            }
+            # Global signals — include ALL so ML model gets complete feature set
+            # (filtering by sector drivers caused 64% of ML features to be zero-filled)
+            snap.global_signals = dict(global_data)
 
             # Sector signals
             snap.sector_signals = self._extract_sector_signals(inst, global_data)
