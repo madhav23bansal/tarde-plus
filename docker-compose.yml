@@ -1,0 +1,56 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: tradeplus-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: tradeplus-timescaledb
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: tradeplus
+      POSTGRES_PASSWORD: tradeplus_dev
+      POSTGRES_DB: tradeplus_market
+    volumes:
+      - timescale_data:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradeplus -d tradeplus_market"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: tradeplus-postgres
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_USER: tradeplus
+      POSTGRES_PASSWORD: tradeplus_dev
+      POSTGRES_DB: tradeplus_trades
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradeplus -d tradeplus_trades"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  timescale_data:
+  postgres_data:
