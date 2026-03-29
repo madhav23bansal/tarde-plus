@@ -24,23 +24,57 @@ class Prediction:
     score: float                # -1.0 (short) to +1.0 (long)
     reasons: list[str]
     features_used: int = 0
-    method: str = "rules"       # "rules" or "ml"
+    method: str = "ensemble"    # "ensemble", "ml", "rules"
+    ml_score: float = 0.0      # raw ML score before blending
+    rules_score: float = 0.0   # raw rules score before blending
+    ml_confidence: float = 0.0
+    rules_confidence: float = 0.0
+
+
+# ML weight by model accuracy — better models get more influence
+ML_WEIGHT_BY_ACCURACY = {
+    # accuracy -> ml_weight (rules_weight = 1 - ml_weight)
+    # Below 52%: don't trust ML, mostly rules
+    # 52-55%: slight ML edge
+    # 55-60%: ML is genuinely useful
+    # 60%+: ML dominant
+}
+
+def _ml_weight(accuracy: float) -> float:
+    """How much to trust the ML model based on its CV accuracy."""
+    if accuracy < 0.52:
+        return 0.2   # barely trust it
+    elif accuracy < 0.55:
+        return 0.4   # slight ML lean
+    elif accuracy < 0.60:
+        return 0.6   # ML is genuinely useful
+    else:
+        return 0.75  # ML dominant
 
 
 class PredictionEngine:
-    """Generates directional predictions from signal snapshots.
+    """Generates ensemble predictions by blending ML + rule-based scores.
 
-    Uses ML model (LightGBM) when available, falls back to rule-based scoring.
-    ML models are loaded once on init from apps/api/models/ directory.
+    For each instrument:
+    1. Compute ML score (LightGBM probability → -1 to +1)
+    2. Compute rule-based score (weighted factors → -1 to +1)
+    3. Blend: final_score = ml_weight * ml_score + rules_weight * rules_score
+       where ml_weight depends on that model's CV accuracy
+
+    If no ML model exists, falls back to rules-only.
     """
 
     def __init__(self) -> None:
         self._ml = None
+        self._ml_accuracies: dict[str, float] = {}
         try:
             from trade_plus.ml.predict import get_ml_predictor
             self._ml = get_ml_predictor()
-            if self._ml and any(self._ml.has_model(i.ticker) for i in __import__("trade_plus.instruments", fromlist=["ALL_INSTRUMENTS"]).ALL_INSTRUMENTS):
-                logger.info("prediction_engine_mode", mode="ml+rules")
+            for ticker in list(self._ml._metrics.keys()):
+                self._ml_accuracies[ticker] = self._ml._metrics[ticker].get("mean_accuracy", 0.5)
+            if self._ml_accuracies:
+                logger.info("prediction_engine_mode", mode="ensemble",
+                           weights={t: f"ml={_ml_weight(a):.0%}" for t, a in self._ml_accuracies.items()})
             else:
                 logger.info("prediction_engine_mode", mode="rules_only")
         except Exception as e:
@@ -48,39 +82,79 @@ class PredictionEngine:
 
     # Factor weights (higher = more influential)
     WEIGHTS = {
-        "fii_flow": 3.0,       # Strongest predictor for Indian equities
-        "vix_regime": 2.5,     # Contrarian at extremes
-        "global_risk": 2.0,    # US markets drive opening
-        "pcr": 2.0,            # Options market sentiment
-        "rsi_extreme": 2.0,    # Mean reversion at extremes
-        "trend": 1.5,          # EMA crossover + MACD
-        "momentum": 1.5,       # 5d/10d returns
-        "bollinger": 1.0,      # Band position
-        "volume": 1.0,         # Volume confirmation
-        "sentiment": 1.0,      # News sentiment
-        "sector_driver": 2.0,  # Sector-specific (gold->DXY, etc.)
-        "breadth": 1.0,        # Advance/decline
+        "fii_flow": 3.0,
+        "vix_regime": 2.5,
+        "global_risk": 2.0,
+        "pcr": 2.0,
+        "rsi_extreme": 2.0,
+        "trend": 1.5,
+        "momentum": 1.5,
+        "bollinger": 1.0,
+        "volume": 1.0,
+        "sentiment": 1.0,
+        "sector_driver": 2.0,
+        "breadth": 1.0,
     }
 
     def predict(self, snap: SignalSnapshot) -> Prediction:
-        # Try ML model first
+        # Always compute rule-based
+        rules_pred = self._predict_rules(snap)
+
+        # Try ML
+        ml_score = 0.0
+        ml_conf = 0.0
+        ml_reasons: list[str] = []
+        has_ml = False
+
         if self._ml and self._ml.has_model(snap.instrument):
             try:
-                direction, score, confidence, reasons = self._ml.predict(snap)
-                return Prediction(
-                    instrument=snap.instrument,
-                    direction=direction,
-                    confidence=confidence,
-                    score=score,
-                    reasons=reasons,
-                    features_used=snap.feature_count,
-                    method="ml",
-                )
+                ml_dir, ml_score, ml_conf, ml_reasons = self._ml.predict(snap)
+                has_ml = True
             except Exception as e:
                 logger.warning("ml_predict_failed", instrument=snap.instrument, error=str(e))
 
-        # Fall back to rule-based scoring
-        return self._predict_rules(snap)
+        if not has_ml:
+            rules_pred.method = "rules"
+            rules_pred.rules_score = rules_pred.score
+            rules_pred.rules_confidence = rules_pred.confidence
+            return rules_pred
+
+        # Ensemble: blend based on model accuracy
+        accuracy = self._ml_accuracies.get(snap.instrument, 0.5)
+        w_ml = _ml_weight(accuracy)
+        w_rules = 1.0 - w_ml
+
+        blended_score = w_ml * ml_score + w_rules * rules_pred.score
+        blended_conf = w_ml * ml_conf + w_rules * rules_pred.confidence
+
+        # Direction from blended score
+        if blended_score > 0.05:
+            direction = Direction.LONG
+        elif blended_score < -0.05:
+            direction = Direction.SHORT
+        else:
+            direction = Direction.FLAT
+
+        # Combine reasons: ML first (if confident), then rules
+        reasons = []
+        if ml_conf > 0.3:
+            reasons.extend(ml_reasons[:2])
+        reasons.extend(rules_pred.reasons[:3])
+        reasons.append(f"Ensemble: ML({w_ml:.0%}) + Rules({w_rules:.0%}) | ML acc: {accuracy:.1%}")
+
+        return Prediction(
+            instrument=snap.instrument,
+            direction=direction,
+            confidence=round(blended_conf, 4),
+            score=round(blended_score, 4),
+            reasons=reasons,
+            features_used=snap.feature_count,
+            method="ensemble",
+            ml_score=round(ml_score, 4),
+            rules_score=round(rules_pred.score, 4),
+            ml_confidence=round(ml_conf, 4),
+            rules_confidence=round(rules_pred.confidence, 4),
+        )
 
     def _predict_rules(self, snap: SignalSnapshot) -> Prediction:
         bull = 0.0

@@ -62,6 +62,7 @@ _state = {
     "activity_log": [],
     "cycle_details": {},
     "db_status": {"redis": False, "timescaledb": False},
+    "last_accuracy": {},
 }
 
 POLL_INTERVAL_SEC = 120
@@ -102,6 +103,12 @@ def _build_predictions_payload() -> dict:
             "reasons": pred.reasons,
             "features_used": pred.features_used,
             "method": pred.method,
+            "ensemble": {
+                "ml_score": pred.ml_score,
+                "rules_score": pred.rules_score,
+                "ml_confidence": pred.ml_confidence,
+                "rules_confidence": pred.rules_confidence,
+            },
         }
         if snap:
             entry["market_data"] = {
@@ -385,6 +392,35 @@ async def _heartbeat_loop():
             })
 
 
+# ── Accuracy evaluation (runs once after market close each day) ───
+
+async def _accuracy_loop():
+    """After market closes, evaluate today's prediction accuracy."""
+    evaluated_today = False
+
+    while True:
+        session = get_session()
+
+        # Evaluate once when market transitions to post_market/closed
+        if session in (MarketSession.POST_MARKET, MarketSession.CLOSED) and not evaluated_today:
+            if _state["db_status"]["timescaledb"] and _state["collection_count"] > 0:
+                try:
+                    from trade_plus.ml.accuracy import evaluate_day
+                    results = await evaluate_day(_tsdb.pool)
+                    if results:
+                        _state["last_accuracy"] = results
+                        logger.info("accuracy_evaluation_done", instruments=list(results.keys()))
+                    evaluated_today = True
+                except Exception as e:
+                    logger.warning("accuracy_evaluation_failed", error=str(e))
+
+        # Reset flag at start of new pre-market
+        if session == MarketSession.PRE_MARKET:
+            evaluated_today = False
+
+        await asyncio.sleep(300)  # check every 5 min
+
+
 # ── FastAPI app ───────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -499,10 +535,12 @@ async def lifespan(app: FastAPI):
 
     t1 = asyncio.create_task(_collection_loop())
     t2 = asyncio.create_task(_heartbeat_loop())
-    logger.info("api_started", msg="Collection + heartbeat loops running")
+    t3 = asyncio.create_task(_accuracy_loop())
+    logger.info("api_started", msg="Collection + heartbeat + accuracy loops running")
     yield
     t1.cancel()
     t2.cancel()
+    t3.cancel()
     await _redis.disconnect()
     await _tsdb.disconnect()
 
@@ -593,6 +631,31 @@ async def get_history():
 @app.get("/api/activity")
 async def get_activity():
     return {"activity": _state["activity_log"]}
+
+@app.get("/api/accuracy/{instrument}")
+async def get_accuracy(instrument: str, days: int = 30):
+    """Get prediction accuracy history for an instrument."""
+    if not _state["db_status"]["timescaledb"]:
+        return {"error": "TimescaleDB not connected"}
+    try:
+        from trade_plus.ml.accuracy import get_accuracy_summary
+        return await get_accuracy_summary(_tsdb.pool, instrument, days)
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/accuracy")
+async def get_all_accuracy():
+    """Get accuracy summary for all instruments."""
+    if not _state["db_status"]["timescaledb"]:
+        return {"error": "TimescaleDB not connected"}
+    try:
+        from trade_plus.ml.accuracy import get_accuracy_summary
+        result = {}
+        for inst in ALL_INSTRUMENTS:
+            result[inst.ticker] = await get_accuracy_summary(_tsdb.pool, inst.ticker, 30)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/api/run/{run_id}")
 async def get_run_detail(run_id: str):
