@@ -92,6 +92,8 @@ class PredictionEngine:
         "bollinger": 1.0,
         "volume": 1.0,
         "sentiment": 1.0,
+        "social_sentiment": 1.5,   # X/Twitter via Grok
+        "ai_news": 1.5,           # Parallel AI news
         "sector_driver": 2.0,
         "breadth": 1.0,
     }
@@ -214,13 +216,31 @@ class PredictionEngine:
             elif snap.change_pct < 0:
                 bear += W["volume"]
 
-        # ── News sentiment ──
+        # ── RSS News sentiment ──
         if snap.news_sentiment > 0.15:
             bull += W["sentiment"]
-            reasons_bull.append(f"Positive news ({snap.news_sentiment:+.3f})")
+            reasons_bull.append(f"Positive RSS news ({snap.news_sentiment:+.3f})")
         elif snap.news_sentiment < -0.15:
             bear += W["sentiment"]
-            reasons_bear.append(f"Negative news ({snap.news_sentiment:+.3f})")
+            reasons_bear.append(f"Negative RSS news ({snap.news_sentiment:+.3f})")
+
+        # ── X/Twitter social sentiment (via Grok) ──
+        if snap.social_post_count > 0:
+            if snap.social_sentiment > 0.2:
+                bull += W["social_sentiment"]
+                reasons_bull.append(f"X/Twitter bullish ({snap.social_sentiment:+.2f}, {snap.social_post_count} posts)")
+            elif snap.social_sentiment < -0.2:
+                bear += W["social_sentiment"]
+                reasons_bear.append(f"X/Twitter bearish ({snap.social_sentiment:+.2f}, {snap.social_post_count} posts)")
+
+        # ── AI news search (Parallel AI) ──
+        if snap.ai_news_count > 0:
+            if snap.ai_news_sentiment > 0.15:
+                bull += W["ai_news"]
+                reasons_bull.append(f"AI news positive ({snap.ai_news_sentiment:+.3f}, {snap.ai_news_count} articles)")
+            elif snap.ai_news_sentiment < -0.15:
+                bear += W["ai_news"]
+                reasons_bear.append(f"AI news negative ({snap.ai_news_sentiment:+.3f}, {snap.ai_news_count} articles)")
 
         # ── Global risk (S&P 500 move) ──
         sp_change = snap.sector_signals.get("sp500_change", snap.global_signals.get("global_sp500_change", 0))

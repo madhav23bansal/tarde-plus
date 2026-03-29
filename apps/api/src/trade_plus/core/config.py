@@ -63,6 +63,13 @@ class RiskConfig(BaseSettings):
     max_order_value: float = 500_000.0  # INR
 
 
+class AIConfig(BaseSettings):
+    """AI provider API keys — loaded from environment."""
+    model_config = SettingsConfigDict()
+    xai_api_key: str = Field(default="", alias="XAI_API_KEY")
+    parallel_api_key: str = Field(default="", alias="PARALLEL_API_KEY")
+
+
 class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="TRADEPLUS_",
@@ -76,3 +83,4 @@ class AppConfig(BaseSettings):
     postgres: PostgresConfig = Field(default_factory=PostgresConfig)
     broker: BrokerConfig = Field(default_factory=BrokerConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
+    ai: AIConfig = Field(default_factory=AIConfig)

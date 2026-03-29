@@ -78,9 +78,22 @@ class SignalSnapshot:
     returns_5d: float = 0.0
     returns_10d: float = 0.0
 
-    # Sentiment
+    # Sentiment (RSS + VADER)
     news_sentiment: float = 0.0
     news_count: int = 0
+
+    # Social sentiment (X/Twitter via Grok)
+    social_sentiment: float = 0.0
+    social_positive_pct: float = 0.0
+    social_negative_pct: float = 0.0
+    social_post_count: int = 0
+    social_trending: list[str] = field(default_factory=list)
+
+    # AI news search (Parallel AI)
+    ai_news_sentiment: float = 0.0
+    ai_news_count: int = 0
+    ai_news_positive: int = 0
+    ai_news_negative: int = 0
 
     # NSE-specific (only for index/banking)
     fii_net: float = 0.0
@@ -129,9 +142,15 @@ class SignalSnapshot:
             "returns_1d": self.returns_1d,
             "returns_5d": self.returns_5d,
             "returns_10d": self.returns_10d,
-            # Sentiment
+            # Sentiment (RSS)
             "news_sentiment": self.news_sentiment,
             "news_count": self.news_count,
+            # Social sentiment (X/Twitter via Grok)
+            "social_sentiment": self.social_sentiment,
+            "social_post_count": self.social_post_count,
+            # AI news (Parallel)
+            "ai_news_sentiment": self.ai_news_sentiment,
+            "ai_news_count": self.ai_news_count,
             # Calendar
             "day_of_week": self.day_of_week,
             "is_expiry_week": int(self.is_expiry_week),
@@ -183,6 +202,23 @@ class SignalCollector:
         self._global_cache: dict[str, float] = {}
         self._global_cache_ts: float = 0.0
         self._nse_cookies_ts: float = 0.0
+
+        # AI clients (initialized lazily if API keys are set)
+        self._grok = None
+        self._parallel = None
+        try:
+            from trade_plus.core.config import AIConfig
+            ai = AIConfig()
+            if ai.xai_api_key:
+                from trade_plus.market_data.grok_sentiment import GrokSentimentClient
+                self._grok = GrokSentimentClient(ai.xai_api_key)
+                logger.info("grok_client_initialized")
+            if ai.parallel_api_key:
+                from trade_plus.market_data.parallel_news import ParallelNewsClient
+                self._parallel = ParallelNewsClient(ai.parallel_api_key)
+                logger.info("parallel_client_initialized")
+        except Exception as e:
+            logger.debug("ai_clients_not_available", error=str(e))
 
     # ─── Layer 1: Global Signals ────────────────────────────────
 
@@ -566,6 +602,20 @@ class SignalCollector:
             for inst in self._instruments
         }
 
+        # Step 3b: AI sentiment (Grok + Parallel) — parallel per instrument
+        grok_tasks = {}
+        parallel_tasks = {}
+        if self._grok:
+            for inst in self._instruments:
+                grok_tasks[inst.ticker] = asyncio.create_task(
+                    self._grok.get_sentiment(inst.sector.value, inst.ticker)
+                )
+        if self._parallel:
+            for inst in self._instruments:
+                parallel_tasks[inst.ticker] = asyncio.create_task(
+                    self._parallel.search_news(inst.sector.value)
+                )
+
         # Step 4: NSE data (sequential due to rate limiting)
         nse_data = {}
         nse_sectors = {Sector.INDEX, Sector.BANKING}
@@ -616,10 +666,33 @@ class SignalCollector:
                 snap.returns_5d = tech.get("returns_5d", 0)
                 snap.returns_10d = tech.get("returns_10d", 0)
 
-            # Sentiment
+            # RSS Sentiment
             sent = await sent_tasks[inst.ticker]
             snap.news_sentiment = sent.get("news_sentiment", 0)
             snap.news_count = sent.get("news_count", 0)
+
+            # Grok X/Twitter sentiment
+            if inst.ticker in grok_tasks:
+                try:
+                    grok_result = await grok_tasks[inst.ticker]
+                    snap.social_sentiment = grok_result.score
+                    snap.social_positive_pct = grok_result.positive_pct
+                    snap.social_negative_pct = grok_result.negative_pct
+                    snap.social_post_count = grok_result.post_count
+                    snap.social_trending = grok_result.trending_topics[:3]
+                except Exception as e:
+                    snap.errors.append(f"grok: {e}")
+
+            # Parallel AI news sentiment
+            if inst.ticker in parallel_tasks:
+                try:
+                    parallel_result = await parallel_tasks[inst.ticker]
+                    snap.ai_news_sentiment = parallel_result.score
+                    snap.ai_news_count = parallel_result.article_count
+                    snap.ai_news_positive = parallel_result.positive_count
+                    snap.ai_news_negative = parallel_result.negative_count
+                except Exception as e:
+                    snap.errors.append(f"parallel: {e}")
 
             # NSE data (for index/banking sectors)
             if inst.sector in nse_sectors:
