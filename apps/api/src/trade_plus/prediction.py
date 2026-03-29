@@ -1,8 +1,6 @@
 """Prediction engine for Nifty/Gold/Silver/Bank direction.
 
-Currently: Rule-based scoring with weighted factors.
-Future: LightGBM trained on historical signal data.
-
+Uses LightGBM ML model when available, falls back to rule-based scoring.
 Each instrument gets a score from -1.0 (strong SHORT) to +1.0 (strong LONG).
 """
 
@@ -10,8 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import structlog
+
 from trade_plus.instruments import Direction, Instrument, Sector
 from trade_plus.market_data.signal_collector import SignalSnapshot
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -22,15 +24,27 @@ class Prediction:
     score: float                # -1.0 (short) to +1.0 (long)
     reasons: list[str]
     features_used: int = 0
+    method: str = "rules"       # "rules" or "ml"
 
 
 class PredictionEngine:
     """Generates directional predictions from signal snapshots.
 
-    Scoring approach: weighted factor model.
-    Each factor adds to bull_score or bear_score.
-    Weights reflect empirically observed predictive power.
+    Uses ML model (LightGBM) when available, falls back to rule-based scoring.
+    ML models are loaded once on init from apps/api/models/ directory.
     """
+
+    def __init__(self) -> None:
+        self._ml = None
+        try:
+            from trade_plus.ml.predict import get_ml_predictor
+            self._ml = get_ml_predictor()
+            if self._ml and any(self._ml.has_model(i.ticker) for i in __import__("trade_plus.instruments", fromlist=["ALL_INSTRUMENTS"]).ALL_INSTRUMENTS):
+                logger.info("prediction_engine_mode", mode="ml+rules")
+            else:
+                logger.info("prediction_engine_mode", mode="rules_only")
+        except Exception as e:
+            logger.info("prediction_engine_mode", mode="rules_only", reason=str(e))
 
     # Factor weights (higher = more influential)
     WEIGHTS = {
@@ -49,6 +63,26 @@ class PredictionEngine:
     }
 
     def predict(self, snap: SignalSnapshot) -> Prediction:
+        # Try ML model first
+        if self._ml and self._ml.has_model(snap.instrument):
+            try:
+                direction, score, confidence, reasons = self._ml.predict(snap)
+                return Prediction(
+                    instrument=snap.instrument,
+                    direction=direction,
+                    confidence=confidence,
+                    score=score,
+                    reasons=reasons,
+                    features_used=snap.feature_count,
+                    method="ml",
+                )
+            except Exception as e:
+                logger.warning("ml_predict_failed", instrument=snap.instrument, error=str(e))
+
+        # Fall back to rule-based scoring
+        return self._predict_rules(snap)
+
+    def _predict_rules(self, snap: SignalSnapshot) -> Prediction:
         bull = 0.0
         bear = 0.0
         reasons_bull: list[str] = []

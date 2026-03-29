@@ -44,3 +44,6 @@ data/signals/
 .claude/
 CLAUDE.md
 AGENTS.md
+
+# ML models (binary, retrain locally)
+apps/api/models/*.joblib

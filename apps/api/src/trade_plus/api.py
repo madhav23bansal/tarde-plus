@@ -101,6 +101,7 @@ def _build_predictions_payload() -> dict:
             "confidence": pred.confidence,
             "reasons": pred.reasons,
             "features_used": pred.features_used,
+            "method": pred.method,
         }
         if snap:
             entry["market_data"] = {
