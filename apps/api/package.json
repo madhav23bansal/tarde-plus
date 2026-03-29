@@ -1,0 +1,16 @@
+{
+  "name": "@trade-plus/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": ".venv/bin/python -m trade_plus.api --port 8000",
+    "test": ".venv/bin/python -m pytest tests/ -v",
+    "lint": ".venv/bin/python -m ruff check src/",
+    "setup": "python3 -m venv .venv && .venv/bin/pip install -e '.[dev]' && .venv/bin/pip install fastapi uvicorn yfinance feedparser vaderSentiment alembic",
+    "db:migrate": ".venv/bin/alembic upgrade head && .venv/bin/alembic -c alembic_trades.ini upgrade head",
+    "db:rollback": ".venv/bin/alembic downgrade -1 && .venv/bin/alembic -c alembic_trades.ini downgrade -1",
+    "db:status": ".venv/bin/alembic current && .venv/bin/alembic -c alembic_trades.ini current",
+    "db:history": ".venv/bin/alembic history && .venv/bin/alembic -c alembic_trades.ini history",
+    "signals": ".venv/bin/python scripts/collect_signals.py"
+  }
+}
