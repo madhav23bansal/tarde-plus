@@ -6,6 +6,13 @@ Background loop collects signals and broadcasts to all connected clients.
 
 from __future__ import annotations
 
+# Load .env before any config reads
+from pathlib import Path as _Path
+_env_file = _Path(__file__).resolve().parents[2] / ".env"
+if _env_file.exists():
+    from dotenv import load_dotenv
+    load_dotenv(_env_file)
+
 import asyncio
 import json
 import time
@@ -130,6 +137,13 @@ def _build_predictions_payload() -> dict:
                 "returns_10d": snap.returns_10d,
                 "news_sentiment": snap.news_sentiment,
                 "news_count": snap.news_count,
+                "social_sentiment": snap.social_sentiment,
+                "social_post_count": snap.social_post_count,
+                "social_trending": snap.social_trending,
+                "ai_news_sentiment": snap.ai_news_sentiment,
+                "ai_news_count": snap.ai_news_count,
+                "ai_news_positive": snap.ai_news_positive,
+                "ai_news_negative": snap.ai_news_negative,
             }
             if snap.sector in ("index", "banking"):
                 entry["nse_data"] = {

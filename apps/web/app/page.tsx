@@ -190,21 +190,43 @@ function Card({pred,seq}:{pred:Prediction;seq:number}){
         <div className="space-y-0.5">
           {pred.reasons?.slice(0,3).map((r,i)=>(<p key={i} className="text-[11px] text-zinc-400 leading-snug"><span className={cn("inline-block h-1 w-1 rounded-full mr-1.5 align-middle",pred.direction==="LONG"?"bg-emerald-600":pred.direction==="SHORT"?"bg-red-600":"bg-zinc-700")}/>{r}</p>))}
         </div>
-        {md&&(<div className="grid grid-cols-6 gap-px bg-zinc-800/30 rounded overflow-hidden">
+        {/* Technicals row */}
+        {md&&(<div className="grid grid-cols-5 gap-px bg-zinc-800/30 rounded overflow-hidden">
           {([["RSI",md.rsi_14?.toFixed(0),md.rsi_14<30?"text-emerald-400":md.rsi_14>70?"text-red-400":"text-zinc-300"],
             ["MACD",(md.macd_histogram>0?"+":"")+md.macd_histogram?.toFixed(1),md.macd_histogram>0?"text-emerald-400":"text-red-400"],
             ["BB",md.bb_position?.toFixed(2),md.bb_position<0.2?"text-emerald-400":md.bb_position>0.8?"text-red-400":"text-zinc-400"],
             ["Vol",md.volume_ratio?.toFixed(1)+"x",md.volume_ratio>1.5?"text-blue-400":"text-zinc-400"],
             ["EMA",md.ema_9>md.ema_21?"Bull":"Bear",md.ema_9>md.ema_21?"text-emerald-400":"text-red-400"],
-            ["Sent",md.news_sentiment?.toFixed(2),md.news_sentiment>0.1?"text-emerald-400":md.news_sentiment<-0.1?"text-red-400":"text-zinc-400"],
           ] as const).map(([l,v,c])=>(<Tip key={l} text={METRIC_TIPS[l]??l}><div className="bg-[#0a0a0f] py-1.5 px-1 text-center cursor-help"><p className="text-[9px] text-zinc-600 uppercase tracking-wider mb-0.5">{l}</p><p className={cn("text-[11px] font-mono font-semibold tabular-nums",c)}>{v}</p></div></Tip>))}
         </div>)}
-        {md&&(<div className="flex gap-3 text-[10px]">
+        {/* Sentiment: 3 sources */}
+        {md&&(<div className="grid grid-cols-3 gap-px bg-zinc-800/30 rounded overflow-hidden">
+          <Tip text="RSS news sentiment from MoneyControl, ET, LiveMint, Google News (VADER scored)"><div className="bg-[#0a0a0f] py-1.5 px-2 cursor-help">
+            <p className="text-[8px] text-zinc-600 uppercase tracking-wider">RSS News</p>
+            <p className={cn("text-[11px] font-mono font-semibold tabular-nums",md.news_sentiment>0.1?"text-emerald-400":md.news_sentiment<-0.1?"text-red-400":"text-zinc-400")}>{md.news_sentiment?.toFixed(3)}</p>
+            <p className="text-[8px] text-zinc-700">{md.news_count} headlines</p>
+          </div></Tip>
+          <Tip text="X/Twitter sentiment via xAI Grok — real-time social media sentiment about this instrument"><div className="bg-[#0a0a0f] py-1.5 px-2 cursor-help">
+            <p className="text-[8px] text-zinc-600 uppercase tracking-wider">X/Twitter</p>
+            <p className={cn("text-[11px] font-mono font-semibold tabular-nums",md.social_sentiment>0.1?"text-emerald-400":md.social_sentiment<-0.1?"text-red-400":"text-zinc-500")}>{md.social_post_count>0?md.social_sentiment?.toFixed(3):"—"}</p>
+            <p className="text-[8px] text-zinc-700">{md.social_post_count>0?`${md.social_post_count} posts`:"no data"}</p>
+          </div></Tip>
+          <Tip text="AI news search via Parallel AI — real-time articles with deduplication, VADER scored"><div className="bg-[#0a0a0f] py-1.5 px-2 cursor-help">
+            <p className="text-[8px] text-zinc-600 uppercase tracking-wider">AI News</p>
+            <p className={cn("text-[11px] font-mono font-semibold tabular-nums",md.ai_news_sentiment>0.1?"text-emerald-400":md.ai_news_sentiment<-0.1?"text-red-400":"text-zinc-500")}>{md.ai_news_count>0?md.ai_news_sentiment?.toFixed(3):"—"}</p>
+            <p className="text-[8px] text-zinc-700">{md.ai_news_count>0?`${md.ai_news_count} articles (+${md.ai_news_positive}/-${md.ai_news_negative})`:"no data"}</p>
+          </div></Tip>
+        </div>)}
+        {/* Returns + ensemble */}
+        {md&&(<div className="flex gap-3 text-[10px] flex-wrap">
           {([["1D",md.returns_1d,"1-day return"],["5D",md.returns_5d,"5-day return"],["10D",md.returns_10d,"10-day return"]] as const).map(([l,v,t])=>(
             <Tip key={l} text={t}><span className={cn("font-mono tabular-nums cursor-help",v>0?"text-emerald-500/70":v<0?"text-red-500/70":"text-zinc-700")}>{l}:{v>0?"+":""}{v?.toFixed(1)}%</span></Tip>
           ))}
-          <Tip text="Average True Range — daily volatility"><span className="text-zinc-700 ml-auto font-mono cursor-help">ATR:{md.atr_14?.toFixed(1)}</span></Tip>
-          <Tip text="High / Low range for the day"><span className="text-zinc-700 font-mono cursor-help">H:{md.day_high?.toFixed(1)} L:{md.day_low?.toFixed(1)}</span></Tip>
+          {pred.ensemble&&(<Tip text={`Ensemble blend: ML score ${pred.ensemble.ml_score>0?"+":""}${pred.ensemble.ml_score.toFixed(2)} (${pred.ensemble.ml_confidence>0?(pred.ensemble.ml_confidence*100).toFixed(0)+"%":"?"}) + Rules ${pred.ensemble.rules_score>0?"+":""}${pred.ensemble.rules_score.toFixed(2)}`}>
+            <span className="text-zinc-600 font-mono cursor-help ml-auto">
+              ML:{pred.ensemble.ml_score>0?"+":""}{pred.ensemble.ml_score.toFixed(2)} R:{pred.ensemble.rules_score>0?"+":""}{pred.ensemble.rules_score.toFixed(2)}
+            </span>
+          </Tip>)}
         </div>)}
       </div>
     </div>

@@ -32,14 +32,20 @@ function getIndicators(inst: any): Indicator[] {
   const vol = inst.volume_ratio ?? 1;
   const ema9 = inst.ema_9 ?? 0;
   const ema21 = inst.ema_21 ?? 0;
-  const sent = inst.news_sentiment ?? 0;
+  const rss = inst.news_sentiment ?? 0;
+  const social = inst.social_sentiment ?? 0;
+  const aiNews = inst.ai_news_sentiment ?? 0;
+  const socialCount = inst.social_post_count ?? 0;
+  const aiCount = inst.ai_news_count ?? 0;
   return [
     { label: "RSI", value: rsi.toFixed(0), status: rsi < 30 ? "bullish" : rsi > 70 ? "bearish" : "neutral", zone: rsi < 30 ? "Oversold" : rsi > 70 ? "Overbought" : rsi < 45 ? "Weak" : rsi > 55 ? "Strong" : "Neutral", tip: "RSI(14) — <30 oversold (buy), >70 overbought (sell)" },
     { label: "MACD", value: (macd > 0 ? "+" : "") + macd.toFixed(2), status: macd > 0 ? "bullish" : "bearish", zone: macd > 0 ? "Momentum ↑" : "Momentum ↓", tip: "MACD Histogram — positive = bullish momentum building" },
     { label: "Bollinger", value: bb.toFixed(2), status: bb < 0.2 ? "bullish" : bb > 0.8 ? "bearish" : "neutral", zone: bb < 0.2 ? "Near Low Band" : bb > 0.8 ? "Near High Band" : "Mid Range", tip: "Bollinger Band position — 0 = lower band (oversold), 1 = upper" },
     { label: "Volume", value: vol.toFixed(1) + "x", status: vol > 1.5 ? "warning" : "neutral", zone: vol > 1.5 ? "High Volume" : vol < 0.5 ? "Low Volume" : "Normal", tip: "Volume vs 20-day average — >1.5x confirms the move" },
     { label: "EMA", value: ema9 > ema21 ? "9 > 21" : "9 < 21", status: ema9 > ema21 ? "bullish" : "bearish", zone: ema9 > ema21 ? "Uptrend" : "Downtrend", tip: "EMA crossover — 9 above 21 = uptrend, below = downtrend" },
-    { label: "Sentiment", value: sent.toFixed(2), status: sent > 0.1 ? "bullish" : sent < -0.1 ? "bearish" : "neutral", zone: sent > 0.1 ? "Positive News" : sent < -0.1 ? "Negative News" : "Mixed", tip: "News sentiment from headlines (-1 bearish to +1 bullish)" },
+    { label: "RSS News", value: rss.toFixed(2), status: rss > 0.1 ? "bullish" : rss < -0.1 ? "bearish" : "neutral", zone: `${inst.news_count ?? 0} headlines`, tip: "RSS news sentiment from MoneyControl, ET, LiveMint, Google News (VADER scored)" },
+    { label: "X/Twitter", value: socialCount > 0 ? social.toFixed(2) : "—", status: social > 0.1 ? "bullish" : social < -0.1 ? "bearish" : "neutral", zone: socialCount > 0 ? `${socialCount} posts` : "No data", tip: "X/Twitter sentiment via xAI Grok" },
+    { label: "AI News", value: aiCount > 0 ? aiNews.toFixed(2) : "—", status: aiNews > 0.1 ? "bullish" : aiNews < -0.1 ? "bearish" : "neutral", zone: aiCount > 0 ? `${aiCount} articles` : "No data", tip: "Real-time news search via Parallel AI with deduplication" },
   ];
 }
 
@@ -332,7 +338,7 @@ export default function RunDetail() {
               {/* Zone C: Indicator Badges */}
               <div className="px-5 pb-4">
                 <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">Technical Indicators</p>
-                <div className="grid grid-cols-6 gap-2">
+                <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
                   {indicators.map(ind => (
                     <Tip key={ind.label} text={ind.tip}>
                       <div className={cn("rounded-lg border px-3 py-2.5 text-center cursor-help transition-colors hover:brightness-110", STATUS_COLORS[ind.status])}>

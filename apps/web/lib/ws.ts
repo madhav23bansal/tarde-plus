@@ -42,6 +42,20 @@ export interface MarketData {
   returns_10d: number;
   news_sentiment: number;
   news_count: number;
+  social_sentiment: number;
+  social_post_count: number;
+  social_trending: string[];
+  ai_news_sentiment: number;
+  ai_news_count: number;
+  ai_news_positive: number;
+  ai_news_negative: number;
+}
+
+export interface EnsembleData {
+  ml_score: number;
+  rules_score: number;
+  ml_confidence: number;
+  rules_confidence: number;
 }
 
 export interface NseData {
@@ -60,6 +74,8 @@ export interface Prediction {
   confidence: number;
   reasons: string[];
   features_used: number;
+  method: string;
+  ensemble?: EnsembleData;
   market_data?: MarketData;
   nse_data?: NseData;
   sector_signals?: Record<string, number>;
