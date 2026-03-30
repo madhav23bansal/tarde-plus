@@ -51,7 +51,7 @@ from trade_plus.market_data.market_hours import (
 from trade_plus.market_data.signal_collector import SignalCollector
 from trade_plus.prediction import PredictionEngine
 from trade_plus.trading.paper_trader import PaperTrader
-from trade_plus.trading.scalper import Scalper
+from trade_plus.trading.intraday import IntradayTrader
 from trade_plus.trading.price_feed import fetch_prices
 
 # ── Config + DB connections ───────────────────────────────────────
@@ -74,7 +74,7 @@ _state = {
     "db_status": {"redis": False, "timescaledb": False},
     "last_accuracy": {},
     "paper_trader": None,
-    "scalper": None,
+    "intraday_trader": None,
     "fast_loop_count": 0,
     "last_prices": {},
 }
@@ -229,18 +229,22 @@ async def _collection_loop():
             run_id = uuid.uuid4()
             run_id_str = str(run_id)
 
-            # ── Set directional bias for fast scalping loop ──
-            scalper = _state.get("scalper")
-            if scalper:
+            # ── Intraday trading: make decisions based on predictions ──
+            itrader = _state.get("intraday_trader")
+            if itrader and session == MarketSession.REGULAR:
                 for pred in predictions:
-                    if pred.confidence >= 0.15:  # only set bias if somewhat confident
-                        scalper.set_bias(pred.instrument, pred.direction, pred.score)
-                    else:
-                        scalper.set_bias(pred.instrument, Direction.FLAT, 0)
-                logger.info("bias_updated", biases={
-                    p.instrument: f"{p.direction.value}({p.score:+.2f})"
-                    for p in predictions if p.confidence >= 0.15
-                })
+                    snap_inst = snapshot.instruments.get(pred.instrument)
+                    if not snap_inst or snap_inst.price <= 0:
+                        continue
+                    decision = itrader.decide(pred.instrument, pred, snap_inst.price)
+                    order = itrader.execute(decision, snap_inst.price, run_id_str)
+                    if order:
+                        logger.info("intraday_trade", instrument=order.instrument, side=order.side,
+                                  qty=order.quantity, price=order.fill_price, action=decision.action,
+                                  reasons=decision.reasons[:2])
+                    elif decision.action not in ("HOLD", "SKIP"):
+                        logger.info("intraday_decision", instrument=pred.instrument,
+                                  action=decision.action, reasons=decision.reasons[:1])
 
             _state["last_snapshot"] = snapshot
             _state["last_predictions"] = predictions
@@ -437,40 +441,38 @@ async def _collection_loop():
 
 # ── Status heartbeat (pushes time/session every 5s) ──────────────
 
-async def _fast_trading_loop():
-    """Fast loop: fetch prices every 30s, execute scalping trades."""
+async def _price_monitor_loop():
+    """Monitor loop: fetch prices every 30s, store ticks, check stops, update indicators."""
     from trade_plus.instruments import ALL_INSTRUMENTS
 
-    # Wait for slow loop to initialize the trader and scalper
     while _state.get("paper_trader") is None:
         await asyncio.sleep(2)
 
     trader = _state["paper_trader"]
-    scalper = Scalper(trader, max_positions=2)
-    _state["scalper"] = scalper
+    itrader = IntradayTrader(trader)
+    _state["intraday_trader"] = itrader
 
-    # Build instrument → yahoo symbol mapping
     inst_map = {i.ticker: i.yahoo_symbol for i in ALL_INSTRUMENTS}
     has_db = _state["db_status"]["timescaledb"]
     backfilled = False
 
-    logger.info("fast_loop_started", interval=FAST_LOOP_SEC, instruments=list(inst_map.keys()), db=has_db)
+    logger.info("monitor_loop_started", mode="intraday_swing", interval=FAST_LOOP_SEC)
 
     while True:
         try:
             session = get_session()
 
-            if session != MarketSession.REGULAR:
-                if session in (MarketSession.CLOSING, MarketSession.POST_MARKET):
-                    if trader.positions:
-                        prices = {t: p.price for t, p in (_state.get("last_prices") or {}).items()}
-                        if prices:
-                            trader.square_off_all(prices)
-                            logger.info("fast_loop_squareoff")
+            if session not in (MarketSession.REGULAR, MarketSession.PRE_OPEN, MarketSession.CLOSING):
+                # After market: square off any remaining positions
+                if session == MarketSession.POST_MARKET and trader.positions:
+                    prices = {t: p.price for t, p in (_state.get("last_prices") or {}).items()}
+                    if prices:
+                        trader.square_off_all(prices)
+                        logger.info("eod_squareoff")
                 await asyncio.sleep(30)
                 continue
 
-            # One-time: backfill historical ticks into DB
+            # One-time: backfill historical ticks
             if has_db and not backfilled:
                 try:
                     from trade_plus.trading.tick_store import backfill_ticks
@@ -479,53 +481,62 @@ async def _fast_trading_loop():
                     logger.info("tick_backfill_done", rows=count)
                 except Exception as e:
                     logger.warning("tick_backfill_failed", error=str(e))
-                    backfilled = True  # don't retry every loop
+                    backfilled = True
 
-            # Fetch fresh prices
+            # Fetch prices
             ticks = await fetch_prices(inst_map)
             _state["last_prices"] = ticks
             _state["fast_loop_count"] += 1
 
-            # Store ticks in DB for future training
+            # Store ticks + compute intraday indicators
             if has_db:
                 try:
-                    from trade_plus.trading.tick_store import store_ticks_batch, compute_intraday_indicators
+                    from trade_plus.trading.tick_store import store_ticks_batch, compute_intraday_indicators, get_today_stats
                     batch = [(t, p.price, p.volume) for t, p in ticks.items() if p.price > 0]
                     if batch:
                         await store_ticks_batch(_tsdb.pool, batch)
 
-                    # Compute intraday indicators from stored ticks
                     for ticker in inst_map:
                         try:
                             ind = await compute_intraday_indicators(_tsdb.pool, ticker)
                             if ind:
-                                scalper.set_intraday_indicators(ticker, ind)
+                                itrader.set_intraday_indicators(ticker, ind)
+                            stats = await get_today_stats(_tsdb.pool, ticker)
+                            if stats:
+                                itrader.day_volatility[ticker] = stats.get("range_pct", 0)
                         except Exception:
                             pass
                 except Exception as e:
                     logger.debug("tick_store_error", error=str(e))
 
-            # Run scalper tick
-            orders = scalper.tick(ticks, run_id=str(uuid.uuid4()))
+            # Update prices and check stops/targets (the slow loop handles entries)
+            price_map = {t: p.price for t, p in ticks.items() if p.price > 0}
+            trader.update_prices(price_map)
 
-            # Broadcast
+            # Check stop loss / take profit on open positions
+            if trader.positions:
+                for inst in list(trader.positions.keys()):
+                    pred = itrader.last_prediction.get(inst)
+                    if pred and price_map.get(inst, 0) > 0:
+                        decision = itrader.decide(inst, pred, price_map[inst])
+                        if decision.action == "EXIT":
+                            order = itrader.execute(decision, price_map[inst], str(uuid.uuid4()))
+                            if order:
+                                logger.info("monitor_exit", instrument=inst, reason=decision.reasons[0])
+
+            # Broadcast live state
             if _ws_queues:
                 await _broadcast({
                     "type": "trading_update",
                     "trading": trader.get_status(),
-                    "momentum": scalper.get_momentum_status(),
+                    "momentum": itrader.get_status(),
                     "prices": {t: {"price": p.price, "bid": p.bid, "ask": p.ask, "fetch_ms": p.fetch_ms}
                               for t, p in ticks.items() if p.price > 0},
                     "fast_loop": _state["fast_loop_count"],
                 })
 
-            if orders:
-                for o in orders:
-                    logger.info("fast_trade", instrument=o.instrument, side=o.side,
-                              qty=o.quantity, price=o.fill_price, pnl=o.pnl, reason=o.reason)
-
         except Exception as e:
-            logger.exception("fast_loop_error")
+            logger.exception("monitor_loop_error")
 
         await asyncio.sleep(FAST_LOOP_SEC)
 
@@ -685,8 +696,8 @@ async def lifespan(app: FastAPI):
     t1 = asyncio.create_task(_collection_loop())
     t2 = asyncio.create_task(_heartbeat_loop())
     t3 = asyncio.create_task(_accuracy_loop())
-    t4 = asyncio.create_task(_fast_trading_loop())
-    logger.info("api_started", msg="Slow loop + fast loop (30s) + heartbeat + accuracy running")
+    t4 = asyncio.create_task(_price_monitor_loop())
+    logger.info("api_started", msg="Slow loop (2min) + monitor loop (30s) + heartbeat + accuracy")
     yield
     t1.cancel()
     t2.cancel()
@@ -784,12 +795,12 @@ async def get_day_result():
 
 @app.get("/api/trading/momentum")
 async def get_momentum():
-    """Live momentum state for all instruments."""
-    scalper = _state.get("scalper")
-    if not scalper:
-        return {"error": "Scalper not initialized"}
+    """Intraday trader live state — decisions, indicators, volatility."""
+    itrader = _state.get("intraday_trader")
+    if not itrader:
+        return {"error": "Intraday trader not initialized"}
     return {
-        "momentum": scalper.get_momentum_status(),
+        "momentum": itrader.get_status(),
         "fast_loop_count": _state["fast_loop_count"],
         "fast_loop_interval": FAST_LOOP_SEC,
     }
