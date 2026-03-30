@@ -550,7 +550,7 @@ async def lifespan(app: FastAPI):
                     deduped.append(a)
             _state["activity_log"] = deduped
 
-            _state["collection_count"] = max(seen_cycles, default=0)
+            _state["collection_count"] = len(deduped)
 
             logger.info("state_seeded_from_db",
                 activity=len(_state["activity_log"]),
