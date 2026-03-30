@@ -1,7 +1,7 @@
 {
   "instrument": "BANKBEES",
-  "samples": 476,
-  "features": 45,
+  "samples": 376,
+  "features": 52,
   "feature_names": [
     "returns_1d",
     "returns_5d",
@@ -43,81 +43,88 @@
     "global_india_vix_5d",
     "global_us_futures_change",
     "global_us_futures_5d",
+    "vix_level",
+    "vix_above_20",
+    "vix_below_14",
+    "vix_percentile",
+    "vix_10d_change",
+    "vix_spike",
+    "vix_mean_revert",
     "global_gold_silver_ratio",
     "global_gs_ratio_signal",
     "day_of_week",
     "days_to_expiry",
     "is_expiry_week"
   ],
-  "mean_accuracy": 0.5139,
-  "std_accuracy": 0.0381,
+  "mean_accuracy": 0.529,
+  "std_accuracy": 0.0472,
   "folds": [
     {
       "fold": 1,
-      "train_size": 81,
-      "test_size": 79,
-      "accuracy": 0.5443,
-      "confident_accuracy": 0.5571,
-      "confident_pct": 88.6
+      "train_size": 66,
+      "test_size": 62,
+      "accuracy": 0.5323,
+      "confident_accuracy": 0.5424,
+      "confident_pct": 95.2
     },
     {
       "fold": 2,
-      "train_size": 160,
-      "test_size": 79,
-      "accuracy": 0.4684,
-      "confident_accuracy": 0.4366,
-      "confident_pct": 89.9
+      "train_size": 128,
+      "test_size": 62,
+      "accuracy": 0.4516,
+      "confident_accuracy": 0.459,
+      "confident_pct": 98.4
     },
     {
       "fold": 3,
-      "train_size": 239,
-      "test_size": 79,
-      "accuracy": 0.481,
-      "confident_accuracy": 0.4648,
-      "confident_pct": 89.9
+      "train_size": 190,
+      "test_size": 62,
+      "accuracy": 0.5484,
+      "confident_accuracy": 0.569,
+      "confident_pct": 93.5
     },
     {
       "fold": 4,
-      "train_size": 318,
-      "test_size": 79,
-      "accuracy": 0.5063,
-      "confident_accuracy": 0.5,
-      "confident_pct": 91.1
+      "train_size": 252,
+      "test_size": 62,
+      "accuracy": 0.5161,
+      "confident_accuracy": 0.5161,
+      "confident_pct": 100.0
     },
     {
       "fold": 5,
-      "train_size": 397,
-      "test_size": 79,
-      "accuracy": 0.5696,
-      "confident_accuracy": 0.5775,
-      "confident_pct": 89.9
+      "train_size": 314,
+      "test_size": 62,
+      "accuracy": 0.5968,
+      "confident_accuracy": 0.5818,
+      "confident_pct": 88.7
     }
   ],
   "top_features": {
-    "global_crude_oil_5d": 130,
-    "global_dxy_5d": 111,
-    "global_crude_oil_change": 101,
-    "global_us_futures_change": 101,
-    "global_us_10y_change": 101,
-    "global_hangseng_change": 101,
-    "rsi_14": 98,
-    "global_nikkei_change": 97,
-    "global_india_vix_change": 92,
-    "returns_1d": 83,
-    "atr_14": 83,
-    "returns_5d": 82,
-    "returns_10d": 81,
-    "global_nasdaq_change": 80,
-    "global_dow_change": 80,
-    "global_copper_5d": 80,
-    "global_usd_inr_change": 78,
-    "global_silver_change": 76,
-    "global_gold_5d": 76,
-    "global_gold_change": 76
+    "rsi_14": 123,
+    "global_hangseng_change": 123,
+    "global_crude_oil_5d": 113,
+    "returns_1d": 103,
+    "global_us_futures_change": 92,
+    "global_usd_inr_change": 86,
+    "global_sp500_change": 84,
+    "global_us_10y_change": 79,
+    "returns_10d": 78,
+    "global_gold_change": 77,
+    "global_us_10y_5d": 75,
+    "global_dxy_change": 75,
+    "global_nasdaq_change": 75,
+    "global_copper_5d": 74,
+    "global_gold_5d": 74,
+    "global_dow_change": 67,
+    "global_silver_5d": 64,
+    "global_dxy_5d": 63,
+    "global_nikkei_5d": 58,
+    "global_crude_oil_change": 58
   },
   "class_balance": {
-    "up": 247,
-    "down": 229
+    "up": 191,
+    "down": 185
   },
-  "trained_at": "2026-03-30T04:29:18.622278"
+  "trained_at": "2026-03-30T06:19:10.244345"
 }

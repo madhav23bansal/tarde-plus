@@ -101,6 +101,19 @@ def build_global_features(globals_df: dict[str, pd.DataFrame]) -> pd.DataFrame:
         features[f"global_{name}_change"] = close.pct_change() * 100
         features[f"global_{name}_5d"] = close.pct_change(5) * 100
 
+    # India VIX derived features (critical for Nifty prediction)
+    if "india_vix" in globals_df and not globals_df["india_vix"].empty:
+        vix = globals_df["india_vix"]["Close"]
+        features["vix_level"] = vix
+        features["vix_above_20"] = (vix > 20).astype(float)      # fear regime
+        features["vix_below_14"] = (vix < 14).astype(float)      # complacency
+        features["vix_percentile"] = vix.rolling(120).rank(pct=True)  # 6-month percentile
+        features["vix_10d_change"] = vix.pct_change(10) * 100
+        # VIX spike: single-day move > 10%
+        features["vix_spike"] = (vix.pct_change().abs() > 0.10).astype(float)
+        # VIX mean reversion signal: high VIX + falling = bullish
+        features["vix_mean_revert"] = ((vix > 20) & (vix.pct_change() < -0.03)).astype(float)
+
     # Derived
     if "gold" in globals_df and "silver" in globals_df:
         gc = globals_df["gold"]["Close"]
