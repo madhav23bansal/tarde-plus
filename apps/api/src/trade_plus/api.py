@@ -455,6 +455,9 @@ async def _price_monitor_loop():
     inst_map = {i.ticker: i.yahoo_symbol for i in ALL_INSTRUMENTS}
     has_db = _state["db_status"]["timescaledb"]
     backfilled = False
+    levels_computed = False
+    last_oi_fetch = 0
+    OI_INTERVAL = 300  # fetch OI every 5 minutes
 
     logger.info("monitor_loop_started", mode="intraday_swing", interval=FAST_LOOP_SEC)
 
@@ -482,6 +485,40 @@ async def _price_monitor_loop():
                 except Exception as e:
                     logger.warning("tick_backfill_failed", error=str(e))
                     backfilled = True
+
+            # Compute morning levels (once per day)
+            if not levels_computed and session == MarketSession.REGULAR:
+                try:
+                    import yfinance as yf
+                    ohlc_data = {}
+                    for ticker, yahoo_sym in inst_map.items():
+                        t = yf.Ticker(yahoo_sym)
+                        hist = t.history(period="5d", interval="1d")
+                        if len(hist) >= 2:
+                            prev = hist.iloc[-2]
+                            today = hist.iloc[-1]
+                            ohlc_data[ticker] = {
+                                "high": float(prev["High"]),
+                                "low": float(prev["Low"]),
+                                "close": float(prev["Close"]),
+                                "open_today": float(today["Open"]),
+                            }
+                    if ohlc_data:
+                        itrader.compute_morning_levels(ohlc_data)
+                        levels_computed = True
+                except Exception as e:
+                    logger.warning("levels_compute_failed", error=str(e))
+
+            # Fetch OI data (every 5 min during market hours)
+            if session == MarketSession.REGULAR and time.time() - last_oi_fetch > OI_INTERVAL:
+                try:
+                    from trade_plus.trading.oi_data import fetch_nifty_oi
+                    oi = await fetch_nifty_oi()
+                    if oi and not oi.get("empty"):
+                        itrader.update_oi(oi)
+                        last_oi_fetch = time.time()
+                except Exception as e:
+                    logger.debug("oi_fetch_failed", error=str(e))
 
             # Fetch prices
             ticks = await fetch_prices(inst_map)
