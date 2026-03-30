@@ -451,15 +451,16 @@ async def _fast_trading_loop():
 
     # Build instrument → yahoo symbol mapping
     inst_map = {i.ticker: i.yahoo_symbol for i in ALL_INSTRUMENTS}
+    has_db = _state["db_status"]["timescaledb"]
+    backfilled = False
 
-    logger.info("fast_loop_started", interval=FAST_LOOP_SEC, instruments=list(inst_map.keys()))
+    logger.info("fast_loop_started", interval=FAST_LOOP_SEC, instruments=list(inst_map.keys()), db=has_db)
 
     while True:
         try:
             session = get_session()
 
             if session != MarketSession.REGULAR:
-                # Not market hours — square off if needed and sleep
                 if session in (MarketSession.CLOSING, MarketSession.POST_MARKET):
                     if trader.positions:
                         prices = {t: p.price for t, p in (_state.get("last_prices") or {}).items()}
@@ -469,15 +470,45 @@ async def _fast_trading_loop():
                 await asyncio.sleep(30)
                 continue
 
+            # One-time: backfill historical ticks into DB
+            if has_db and not backfilled:
+                try:
+                    from trade_plus.trading.tick_store import backfill_ticks
+                    count = await backfill_ticks(_tsdb.pool, inst_map)
+                    backfilled = True
+                    logger.info("tick_backfill_done", rows=count)
+                except Exception as e:
+                    logger.warning("tick_backfill_failed", error=str(e))
+                    backfilled = True  # don't retry every loop
+
             # Fetch fresh prices
             ticks = await fetch_prices(inst_map)
             _state["last_prices"] = ticks
             _state["fast_loop_count"] += 1
 
+            # Store ticks in DB for future training
+            if has_db:
+                try:
+                    from trade_plus.trading.tick_store import store_ticks_batch, compute_intraday_indicators
+                    batch = [(t, p.price, p.volume) for t, p in ticks.items() if p.price > 0]
+                    if batch:
+                        await store_ticks_batch(_tsdb.pool, batch)
+
+                    # Compute intraday indicators from stored ticks
+                    for ticker in inst_map:
+                        try:
+                            ind = await compute_intraday_indicators(_tsdb.pool, ticker)
+                            if ind:
+                                scalper.set_intraday_indicators(ticker, ind)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.debug("tick_store_error", error=str(e))
+
             # Run scalper tick
             orders = scalper.tick(ticks, run_id=str(uuid.uuid4()))
 
-            # Broadcast trading update if any orders or positions exist
+            # Broadcast
             if _ws_queues:
                 await _broadcast({
                     "type": "trading_update",
