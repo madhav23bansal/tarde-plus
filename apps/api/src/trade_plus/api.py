@@ -104,72 +104,87 @@ async def _broadcast(message: dict):
 
 def _build_predictions_payload() -> dict:
     predictions = _state["last_predictions"]
-    snapshot = _state["last_snapshot"]
-    if not predictions or not snapshot:
+    snapshot = _state["last_snapshot"]  # SignalSnapshot
+    if not predictions:
         return {"predictions": [], "message": "Collecting..."}
 
+    itrader = _state.get("intraday_trader")
     result = []
-    for pred in predictions:
-        snap = snapshot.instruments.get(pred.instrument)
+
+    for bias in predictions:
+        # Build a frontend-compatible prediction object from DailyBias + live data
         entry = {
-            "instrument": pred.instrument,
-            "direction": pred.direction.value,
-            "score": pred.score,
-            "confidence": pred.confidence,
-            "reasons": pred.reasons,
-            "features_used": pred.features_used,
-            "method": pred.method,
+            "instrument": "NIFTYBEES",
+            "direction": bias.direction.value,
+            "score": bias.score,
+            "confidence": bias.confidence,
+            "reasons": bias.reasons,
+            "features_used": 5,  # 5 core signals
+            "method": bias.method,
             "ensemble": {
-                "ml_score": pred.ml_score,
-                "rules_score": pred.rules_score,
-                "ml_confidence": pred.ml_confidence,
-                "rules_confidence": pred.rules_confidence,
+                "ml_score": bias.ml_score,
+                "rules_score": bias.rules_score,
+                "ml_confidence": 0,
+                "rules_confidence": bias.confidence,
             },
         }
-        if snap:
+
+        # Market data from snapshot
+        if snapshot:
             entry["market_data"] = {
-                "price": snap.price,
-                "prev_close": snap.prev_close,
-                "change_pct": snap.change_pct,
-                "day_high": snap.day_high,
-                "day_low": snap.day_low,
-                "volume": snap.volume,
-                "volume_ratio": snap.volume_ratio,
-                "rsi_14": snap.rsi_14,
-                "macd_histogram": snap.macd_histogram,
-                "bb_position": snap.bb_position,
-                "ema_9": snap.ema_9,
-                "ema_21": snap.ema_21,
-                "atr_14": snap.atr_14,
-                "returns_1d": snap.returns_1d,
-                "returns_5d": snap.returns_5d,
-                "returns_10d": snap.returns_10d,
-                "news_sentiment": snap.news_sentiment,
-                "news_count": snap.news_count,
-                "social_sentiment": snap.social_sentiment,
-                "social_post_count": snap.social_post_count,
-                "social_trending": snap.social_trending,
-                "ai_news_sentiment": snap.ai_news_sentiment,
-                "ai_news_count": snap.ai_news_count,
-                "ai_news_positive": snap.ai_news_positive,
-                "ai_news_negative": snap.ai_news_negative,
+                "price": snapshot.nifty_close,
+                "prev_close": 0,
+                "change_pct": snapshot.nifty_change,
+                "day_high": 0,
+                "day_low": 0,
+                "volume": 0,
+                "volume_ratio": snapshot.volume_ratio,
+                "rsi_14": snapshot.rsi_14,
+                "macd_histogram": 0,
+                "bb_position": 0,
+                "ema_9": 0,
+                "ema_21": 0,
+                "atr_14": 0,
+                "returns_1d": snapshot.returns_1d,
+                "returns_5d": snapshot.returns_5d,
+                "returns_10d": 0,
+                "news_sentiment": 0,
+                "news_count": 0,
+                "social_sentiment": 0,
+                "social_post_count": 0,
+                "social_trending": [],
+                "ai_news_sentiment": snapshot.ai_news_sentiment,
+                "ai_news_count": snapshot.ai_news_count,
+                "ai_news_positive": 0,
+                "ai_news_negative": 0,
             }
-            if snap.sector in ("index", "banking"):
-                entry["nse_data"] = {
-                    "fii_net": snap.fii_net,
-                    "dii_net": snap.dii_net,
-                    "india_vix": snap.india_vix,
-                    "india_vix_change": snap.india_vix_change,
-                    "pcr_oi": snap.pcr_oi,
-                    "ad_ratio": snap.ad_ratio,
-                }
-            entry["sector_signals"] = snap.sector_signals
+            entry["nse_data"] = {
+                "fii_net": snapshot.fii_net,
+                "dii_net": snapshot.dii_net,
+                "india_vix": snapshot.india_vix,
+                "india_vix_change": snapshot.india_vix_change,
+                "pcr_oi": 0,
+                "ad_ratio": 0,
+            }
+            entry["sector_signals"] = {
+                "sp500_change": snapshot.sp500_change,
+                "crude_oil_change": snapshot.crude_oil_change,
+            }
+
+        # Add level-based data if available
+        if itrader:
+            levels = itrader.levels.get("NIFTYBEES")
+            if levels:
+                entry["levels"] = levels.to_dict()
+            status = itrader.get_status()
+            entry["intraday_state"] = status
+
         result.append(entry)
 
     return {
         "predictions": result,
         "updated_at": _state["last_update"],
-        "session": snapshot.session,
+        "session": _state.get("last_snapshot").timestamp if _state.get("last_snapshot") else 0,
         "collection_count": _state["collection_count"],
     }
 
