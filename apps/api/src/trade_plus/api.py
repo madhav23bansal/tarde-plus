@@ -39,7 +39,7 @@ logger = structlog.get_logger()
 from trade_plus.core.config import AppConfig
 from trade_plus.data.redis_store import RedisStore
 from trade_plus.data.timescale_store import TimescaleStore
-from trade_plus.instruments import ALL_INSTRUMENTS
+from trade_plus.instruments import ALL_INSTRUMENTS, Direction
 from trade_plus.market_data.market_hours import (
     MarketSession,
     can_open_new_position,
@@ -51,6 +51,8 @@ from trade_plus.market_data.market_hours import (
 from trade_plus.market_data.signal_collector import SignalCollector
 from trade_plus.prediction import PredictionEngine
 from trade_plus.trading.paper_trader import PaperTrader
+from trade_plus.trading.scalper import Scalper
+from trade_plus.trading.price_feed import fetch_prices
 
 # ── Config + DB connections ───────────────────────────────────────
 
@@ -72,7 +74,12 @@ _state = {
     "db_status": {"redis": False, "timescaledb": False},
     "last_accuracy": {},
     "paper_trader": None,
+    "scalper": None,
+    "fast_loop_count": 0,
+    "last_prices": {},
 }
+
+FAST_LOOP_SEC = 30  # scalping cycle
 
 POLL_INTERVAL_SEC = 120
 PRE_MARKET_INTERVAL_SEC = 600
@@ -222,31 +229,18 @@ async def _collection_loop():
             run_id = uuid.uuid4()
             run_id_str = str(run_id)
 
-            # ── Paper trading: execute trades based on predictions ──
-            if session == MarketSession.REGULAR and can_open_new_position():
-                prices = {t: s.price for t, s in snapshot.instruments.items() if s.price > 0}
-                trader.update_prices(prices)
-                trader.check_stop_losses(prices)
-
+            # ── Set directional bias for fast scalping loop ──
+            scalper = _state.get("scalper")
+            if scalper:
                 for pred in predictions:
-                    snap = snapshot.instruments.get(pred.instrument)
-                    if not snap or snap.price <= 0:
-                        continue
-                    should, reason = trader.should_trade(
-                        pred.instrument, pred.direction, pred.confidence, pred.score,
-                    )
-                    if should:
-                        trader.execute_entry(
-                            pred.instrument, pred.direction, snap.price,
-                            pred.score, run_id_str, reason,
-                        )
-
-            # Square off at 3:15 PM
-            if session == MarketSession.REGULAR and should_squareoff():
-                prices = {t: s.price for t, s in snapshot.instruments.items() if s.price > 0}
-                closed = trader.square_off_all(prices)
-                if closed:
-                    logger.info("paper_squareoff", closed=len(closed))
+                    if pred.confidence >= 0.15:  # only set bias if somewhat confident
+                        scalper.set_bias(pred.instrument, pred.direction, pred.score)
+                    else:
+                        scalper.set_bias(pred.instrument, Direction.FLAT, 0)
+                logger.info("bias_updated", biases={
+                    p.instrument: f"{p.direction.value}({p.score:+.2f})"
+                    for p in predictions if p.confidence >= 0.15
+                })
 
             _state["last_snapshot"] = snapshot
             _state["last_predictions"] = predictions
@@ -443,6 +437,68 @@ async def _collection_loop():
 
 # ── Status heartbeat (pushes time/session every 5s) ──────────────
 
+async def _fast_trading_loop():
+    """Fast loop: fetch prices every 30s, execute scalping trades."""
+    from trade_plus.instruments import ALL_INSTRUMENTS
+
+    # Wait for slow loop to initialize the trader and scalper
+    while _state.get("paper_trader") is None:
+        await asyncio.sleep(2)
+
+    trader = _state["paper_trader"]
+    scalper = Scalper(trader, max_positions=2)
+    _state["scalper"] = scalper
+
+    # Build instrument → yahoo symbol mapping
+    inst_map = {i.ticker: i.yahoo_symbol for i in ALL_INSTRUMENTS}
+
+    logger.info("fast_loop_started", interval=FAST_LOOP_SEC, instruments=list(inst_map.keys()))
+
+    while True:
+        try:
+            session = get_session()
+
+            if session != MarketSession.REGULAR:
+                # Not market hours — square off if needed and sleep
+                if session in (MarketSession.CLOSING, MarketSession.POST_MARKET):
+                    if trader.positions:
+                        prices = {t: p.price for t, p in (_state.get("last_prices") or {}).items()}
+                        if prices:
+                            trader.square_off_all(prices)
+                            logger.info("fast_loop_squareoff")
+                await asyncio.sleep(30)
+                continue
+
+            # Fetch fresh prices
+            ticks = await fetch_prices(inst_map)
+            _state["last_prices"] = ticks
+            _state["fast_loop_count"] += 1
+
+            # Run scalper tick
+            orders = scalper.tick(ticks, run_id=str(uuid.uuid4()))
+
+            # Broadcast trading update if any orders or positions exist
+            if _ws_queues and (orders or trader.positions or trader.day_trades > 0):
+                await _broadcast({
+                    "type": "trading_update",
+                    "trading": trader.get_status(),
+                    "momentum": scalper.get_momentum_status(),
+                    "prices": {t: {"price": p.price, "bid": p.bid, "ask": p.ask, "fetch_ms": p.fetch_ms}
+                              for t, p in ticks.items() if p.price > 0},
+                    "fast_loop": _state["fast_loop_count"],
+                })
+
+            if orders:
+                for o in orders:
+                    logger.info("fast_trade", instrument=o.instrument, side=o.side,
+                              qty=o.quantity, price=o.fill_price, pnl=o.pnl, reason=o.reason)
+
+        except Exception as e:
+            logger.exception("fast_loop_error")
+
+        await asyncio.sleep(FAST_LOOP_SEC)
+
+
 async def _heartbeat_loop():
     """Push lightweight status every 5 seconds for live timers."""
     while True:
@@ -598,11 +654,13 @@ async def lifespan(app: FastAPI):
     t1 = asyncio.create_task(_collection_loop())
     t2 = asyncio.create_task(_heartbeat_loop())
     t3 = asyncio.create_task(_accuracy_loop())
-    logger.info("api_started", msg="Collection + heartbeat + accuracy loops running")
+    t4 = asyncio.create_task(_fast_trading_loop())
+    logger.info("api_started", msg="Slow loop + fast loop (30s) + heartbeat + accuracy running")
     yield
     t1.cancel()
     t2.cancel()
     t3.cancel()
+    t4.cancel()
     await _redis.disconnect()
     await _tsdb.disconnect()
 
@@ -692,6 +750,18 @@ async def get_day_result():
     if not trader:
         return {"error": "Paper trader not initialized"}
     return trader.get_day_result().to_dict()
+
+@app.get("/api/trading/momentum")
+async def get_momentum():
+    """Live momentum state for all instruments."""
+    scalper = _state.get("scalper")
+    if not scalper:
+        return {"error": "Scalper not initialized"}
+    return {
+        "momentum": scalper.get_momentum_status(),
+        "fast_loop_count": _state["fast_loop_count"],
+        "fast_loop_interval": FAST_LOOP_SEC,
+    }
 
 @app.get("/api/instruments")
 async def get_instruments():

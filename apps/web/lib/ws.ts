@@ -189,6 +189,12 @@ function applyMessage(msg: any) {
       session: msg.status?.market?.session ?? useStore.getState().session,
       lastWsMessage: now,
     });
+  } else if (msg.type === "trading_update") {
+    // Fast loop trading updates (every 30s during market hours)
+    useStore.setState((s) => ({
+      trading: msg.trading ?? s.trading,
+      lastWsMessage: now,
+    }));
   }
 }
 

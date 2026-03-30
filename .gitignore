@@ -47,3 +47,4 @@ AGENTS.md
 
 # ML models (binary, retrain locally)
 apps/api/models/*.joblib
+apps/api/_shoonya_sdk/
