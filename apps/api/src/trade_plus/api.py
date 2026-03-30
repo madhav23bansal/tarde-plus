@@ -49,7 +49,7 @@ from trade_plus.market_data.market_hours import (
     should_squareoff,
 )
 from trade_plus.market_data.signal_collector import SignalCollector
-from trade_plus.prediction import PredictionEngine
+from trade_plus.prediction import BiasPredictor
 from trade_plus.trading.paper_trader import PaperTrader
 from trade_plus.trading.intraday import IntradayTrader
 from trade_plus.trading.price_feed import fetch_prices
@@ -193,7 +193,7 @@ def _build_status_payload() -> dict:
 
 async def _collection_loop():
     collector = SignalCollector()
-    engine = PredictionEngine()
+    engine = BiasPredictor()
 
     # Initialize paper trader
     trader = PaperTrader(capital=50_000.0, leverage=5.0, broker="shoonya")
@@ -222,29 +222,30 @@ async def _collection_loop():
             snapshot = await collector.collect()
             collect_dur = round(time.time() - collect_start, 2)
 
-            predictions = []
-            for ticker, snap in snapshot.instruments.items():
-                predictions.append(engine.predict(snap))
+            # Generate daily bias from signals
+            bias = engine.predict(snapshot.to_bias_signals())
+            predictions = [bias]  # keep as list for compatibility
 
             run_id = uuid.uuid4()
             run_id_str = str(run_id)
 
-            # ── Intraday trading: make decisions based on predictions ──
+            # ── Set bias + execute intraday trades ──
             itrader = _state.get("intraday_trader")
-            if itrader and session == MarketSession.REGULAR:
-                for pred in predictions:
-                    snap_inst = snapshot.instruments.get(pred.instrument)
-                    if not snap_inst or snap_inst.price <= 0:
-                        continue
-                    decision = itrader.decide(pred.instrument, pred, snap_inst.price)
-                    order = itrader.execute(decision, snap_inst.price, run_id_str)
-                    if order:
-                        logger.info("intraday_trade", instrument=order.instrument, side=order.side,
-                                  qty=order.quantity, price=order.fill_price, action=decision.action,
-                                  reasons=decision.reasons[:2])
-                    elif decision.action not in ("HOLD", "SKIP"):
-                        logger.info("intraday_decision", instrument=pred.instrument,
-                                  action=decision.action, reasons=decision.reasons[:1])
+            if itrader:
+                itrader.set_bias("NIFTYBEES", bias.direction, bias.score)
+                itrader.last_prediction["NIFTYBEES"] = bias
+
+                if session == MarketSession.REGULAR:
+                    price_map = {t: p.price for t, p in (_state.get("last_prices") or {}).items()}
+                    price = price_map.get("NIFTYBEES", 0)
+                    if price > 0:
+                        decision = itrader.decide("NIFTYBEES", bias, price)
+                        order = itrader.execute(decision, price, run_id_str)
+                        if order:
+                            logger.info("intraday_trade", instrument=order.instrument,
+                                      side=order.side, qty=order.quantity, price=order.fill_price,
+                                      action=decision.get("action"),
+                                      reasons=decision.get("reasons", [])[:2])
 
             _state["last_snapshot"] = snapshot
             _state["last_predictions"] = predictions
