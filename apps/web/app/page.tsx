@@ -380,19 +380,20 @@ export default function Home(){
           <div className="flex items-center gap-2 bg-red-500/8 border border-red-500/20 rounded-lg px-4 py-2.5 text-xs text-red-400 font-bold animate-pulse"><AlertTriangle className="h-4 w-4"/>SQUARE OFF — Close MIS before 3:20 PM</div>
         )}
 
-        {/* Trading summary bar */}
-        {trading && trading.day_trades > 0 && (
+        {/* Trading summary bar — always visible */}
+        {trading && (
           <Link href="/trades" className={cn("flex items-center justify-between rounded-lg border px-4 py-2 transition-colors hover:brightness-110",
-            trading.day_pnl >= 0 ? "border-emerald-900/30 bg-emerald-500/[0.03]" : "border-red-900/30 bg-red-500/[0.03]"
+            !trading.day_trades ? "border-zinc-800/50 bg-zinc-900/30" : trading.day_pnl >= 0 ? "border-emerald-900/30 bg-emerald-500/[0.03]" : "border-red-900/30 bg-red-500/[0.03]"
           )}>
             <div className="flex items-center gap-4 text-xs">
-              <span className="text-zinc-500">Paper Trading</span>
+              <span className="text-zinc-400 font-semibold">Paper Trading</span>
+              <span className="text-zinc-600">Capital: Rs {trading.capital?.toFixed(0)}</span>
               <span className={cn("font-mono font-bold", trading.day_pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
                 P&L: Rs {trading.day_pnl >= 0 ? "+" : ""}{trading.day_pnl?.toFixed(2)}
               </span>
               <span className="text-zinc-600">Trades: {trading.day_trades}</span>
-              <span className="text-zinc-600">Win: {(trading.win_rate * 100)?.toFixed(0)}%</span>
-              <span className="text-zinc-600">Positions: {trading.open_position_count}</span>
+              {trading.day_trades > 0 && <span className="text-zinc-600">Win: {(trading.win_rate * 100)?.toFixed(0)}%</span>}
+              <span className={cn("text-zinc-600", trading.open_position_count > 0 && "text-blue-400")}>Positions: {trading.open_position_count}</span>
             </div>
             <span className="text-[10px] text-zinc-600">View details →</span>
           </Link>

@@ -30,7 +30,7 @@ function Stat({ label, value, color, icon: Icon, tip }: {
 }
 
 export default function TradesPage() {
-  useTick(2000);
+  useTick(1000);  // re-render every second for live updates
   const { trading, connected } = useStore();
 
   // Also fetch from REST as fallback

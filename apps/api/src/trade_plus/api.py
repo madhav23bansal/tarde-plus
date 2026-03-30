@@ -478,7 +478,7 @@ async def _fast_trading_loop():
             orders = scalper.tick(ticks, run_id=str(uuid.uuid4()))
 
             # Broadcast trading update if any orders or positions exist
-            if _ws_queues and (orders or trader.positions or trader.day_trades > 0):
+            if _ws_queues:
                 await _broadcast({
                     "type": "trading_update",
                     "trading": trader.get_status(),
