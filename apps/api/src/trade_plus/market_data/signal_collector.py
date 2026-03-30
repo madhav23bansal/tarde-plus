@@ -206,6 +206,7 @@ class SignalCollector:
         # AI clients (initialized lazily if API keys are set)
         self._grok = None
         self._parallel = None
+        self._redis_for_cache = None
         try:
             from trade_plus.core.config import AIConfig
             ai = AIConfig()
@@ -219,6 +220,15 @@ class SignalCollector:
                 logger.info("parallel_client_initialized")
         except Exception as e:
             logger.debug("ai_clients_not_available", error=str(e))
+
+    def set_redis_cache(self, redis_client) -> None:
+        """Inject Redis client for AI API caching. Called by the API server."""
+        import trade_plus.market_data.grok_sentiment as grok_mod
+        import trade_plus.market_data.parallel_news as parallel_mod
+        grok_mod._redis_client = redis_client
+        parallel_mod._redis_client = redis_client
+        self._redis_for_cache = redis_client
+        logger.info("ai_redis_cache_enabled")
 
     # ─── Layer 1: Global Signals ────────────────────────────────
 

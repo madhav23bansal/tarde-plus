@@ -186,6 +186,10 @@ async def _collection_loop():
     collector = SignalCollector()
     engine = PredictionEngine()
 
+    # Inject Redis for AI API caching
+    if _state["db_status"]["redis"]:
+        collector.set_redis_cache(_redis.client)
+
     while True:
         try:
             session = get_session()
@@ -281,6 +285,15 @@ async def _collection_loop():
                     "returns_10d": snap.returns_10d,
                     "news_sentiment": snap.news_sentiment,
                     "news_count": snap.news_count,
+                    "social_sentiment": snap.social_sentiment,
+                    "social_positive_pct": snap.social_positive_pct,
+                    "social_negative_pct": snap.social_negative_pct,
+                    "social_post_count": snap.social_post_count,
+                    "social_trending": snap.social_trending,
+                    "ai_news_sentiment": snap.ai_news_sentiment,
+                    "ai_news_count": snap.ai_news_count,
+                    "ai_news_positive": snap.ai_news_positive,
+                    "ai_news_negative": snap.ai_news_negative,
                     "fii_net": snap.fii_net,
                     "dii_net": snap.dii_net,
                     "india_vix": snap.india_vix,
@@ -729,6 +742,15 @@ async def get_run_detail(run_id: str):
                 "returns_10d": float(row["returns_10d"]) if row["returns_10d"] else 0,
                 "news_sentiment": float(row["news_sentiment"]) if row["news_sentiment"] else 0,
                 "news_count": int(row["news_count"]) if row["news_count"] else 0,
+                "social_sentiment": float(row["social_sentiment"]) if row.get("social_sentiment") else 0,
+                "social_positive_pct": float(row["social_positive_pct"]) if row.get("social_positive_pct") else 0,
+                "social_negative_pct": float(row["social_negative_pct"]) if row.get("social_negative_pct") else 0,
+                "social_post_count": int(row["social_post_count"]) if row.get("social_post_count") else 0,
+                "social_trending": list(row["social_trending"]) if row.get("social_trending") else [],
+                "ai_news_sentiment": float(row["ai_news_sentiment"]) if row.get("ai_news_sentiment") else 0,
+                "ai_news_count": int(row["ai_news_count"]) if row.get("ai_news_count") else 0,
+                "ai_news_positive": int(row["ai_news_positive"]) if row.get("ai_news_positive") else 0,
+                "ai_news_negative": int(row["ai_news_negative"]) if row.get("ai_news_negative") else 0,
                 "fii_net": float(row["fii_net"]) if row["fii_net"] else 0,
                 "dii_net": float(row["dii_net"]) if row["dii_net"] else 0,
                 "india_vix": float(row["india_vix"]) if row["india_vix"] else 0,

@@ -53,6 +53,8 @@ class TimescaleStore:
                 rsi_14, macd_histogram, bb_position, ema_9, ema_21, atr_14,
                 returns_1d, returns_5d, returns_10d,
                 news_sentiment, news_count,
+                social_sentiment, social_positive_pct, social_negative_pct, social_post_count, social_trending,
+                ai_news_sentiment, ai_news_count, ai_news_positive, ai_news_negative,
                 fii_net, dii_net, india_vix, india_vix_change, pcr_oi, ad_ratio,
                 features, global_signals, sector_signals,
                 data_staleness, errors
@@ -62,9 +64,11 @@ class TimescaleStore:
                 $12, $13, $14, $15, $16, $17,
                 $18, $19, $20,
                 $21, $22,
-                $23, $24, $25, $26, $27, $28,
-                $29, $30, $31,
-                $32, $33
+                $23, $24, $25, $26, $27,
+                $28, $29, $30, $31,
+                $32, $33, $34, $35, $36, $37,
+                $38, $39, $40,
+                $41, $42
             )
             """,
             run_id, session, snap.instrument, snap.sector,
@@ -73,6 +77,9 @@ class TimescaleStore:
             snap.rsi_14, snap.macd_histogram, snap.bb_position, snap.ema_9, snap.ema_21,
             snap.atr_14, snap.returns_1d, snap.returns_5d, snap.returns_10d,
             snap.news_sentiment, snap.news_count,
+            snap.social_sentiment, snap.social_positive_pct, snap.social_negative_pct,
+            snap.social_post_count, snap.social_trending or [],
+            snap.ai_news_sentiment, snap.ai_news_count, snap.ai_news_positive, snap.ai_news_negative,
             snap.fii_net, snap.dii_net, snap.india_vix, snap.india_vix_change,
             snap.pcr_oi, snap.ad_ratio,
             json.dumps(snap.to_feature_dict(), default=str),

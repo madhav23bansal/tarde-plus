@@ -3,11 +3,13 @@
 Uses Parallel's search API to fetch latest news articles about
 Indian market instruments, then scores sentiment with VADER.
 Deduplication is handled server-side by Parallel.
+Results cached in Redis with 10-minute TTL to avoid repeated API costs.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -15,6 +17,10 @@ import httpx
 import structlog
 
 logger = structlog.get_logger()
+
+# Redis cache (set externally by signal_collector)
+_redis_client = None
+CACHE_TTL = 600  # 10 minutes
 
 PARALLEL_BASE_URL = "https://api.parallel.ai"
 
@@ -74,7 +80,22 @@ class ParallelNewsClient:
         return self._client
 
     async def search_news(self, sector: str, max_results: int = 10) -> NewsSentiment:
-        """Search for latest news about a sector and score sentiment."""
+        """Search for latest news about a sector and score sentiment.
+        Results cached in Redis for 10 minutes to avoid repeated API costs.
+        """
+        cache_key = f"parallel:news:{sector}"
+
+        # Check Redis cache first
+        if _redis_client:
+            try:
+                cached = await _redis_client.get(cache_key)
+                if cached:
+                    data = json.loads(cached)
+                    logger.debug("parallel_cache_hit", sector=sector)
+                    return self._parse_cached(data)
+            except Exception:
+                pass
+
         client = await self._ensure_client()
 
         objective = SECTOR_OBJECTIVES.get(sector, SECTOR_OBJECTIVES["index"])
@@ -106,6 +127,22 @@ class ParallelNewsClient:
 
             # Score sentiment with VADER
             scored = self._score_articles(articles)
+
+            # Cache in Redis
+            if _redis_client:
+                try:
+                    cache_data = {
+                        "score": scored.score,
+                        "article_count": scored.article_count,
+                        "positive_count": scored.positive_count,
+                        "negative_count": scored.negative_count,
+                        "neutral_count": scored.neutral_count,
+                        "articles": [{"title": a.title, "url": a.url, "excerpt": a.excerpt, "sentiment": a.sentiment} for a in scored.articles],
+                    }
+                    await _redis_client.set(cache_key, json.dumps(cache_data), ex=CACHE_TTL)
+                    logger.debug("parallel_cached", sector=sector, ttl=CACHE_TTL)
+                except Exception:
+                    pass
 
             return scored
 
@@ -151,6 +188,22 @@ class ParallelNewsClient:
             negative_count=neg,
             neutral_count=neu,
             source="parallel",
+        )
+
+    def _parse_cached(self, data: dict) -> NewsSentiment:
+        """Reconstruct NewsSentiment from cached JSON."""
+        articles = [
+            NewsArticle(title=a["title"], url=a["url"], excerpt=a["excerpt"], sentiment=a["sentiment"])
+            for a in data.get("articles", [])
+        ]
+        return NewsSentiment(
+            score=data.get("score", 0),
+            article_count=data.get("article_count", 0),
+            articles=articles,
+            positive_count=data.get("positive_count", 0),
+            negative_count=data.get("negative_count", 0),
+            neutral_count=data.get("neutral_count", 0),
+            source="parallel_cached",
         )
 
     async def close(self) -> None:

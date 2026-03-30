@@ -1,10 +1,7 @@
 """xAI Grok — X/Twitter sentiment analysis and trending topics.
 
-Uses Grok's chat completions with x_search tool to:
-1. Search X for real-time posts about Indian market instruments
-2. Score sentiment of posts via grok-3-mini (cheap + fast)
-3. Extract trending topics and influencer activity
-
+Uses Grok's chat completions to analyze market sentiment.
+Results cached in Redis with 5-minute TTL to avoid repeated API costs.
 Cost: ~$0.30/1M tokens with grok-3-mini
 """
 
@@ -18,6 +15,10 @@ import httpx
 import structlog
 
 logger = structlog.get_logger()
+
+# Redis cache (set externally by signal_collector)
+_redis_client = None
+CACHE_TTL = 300  # 5 minutes
 
 GROK_BASE_URL = "https://api.x.ai/v1"
 SENTIMENT_MODEL = "grok-3-mini"  # cheap for batch sentiment
@@ -63,10 +64,20 @@ class GrokSentimentClient:
         return self._client
 
     async def get_sentiment(self, sector: str, instrument: str) -> SocialSentiment:
-        """Get X/Twitter sentiment for a sector/instrument.
+        """Get X/Twitter sentiment. Cached in Redis for 5 minutes."""
+        cache_key = f"grok:sentiment:{sector}:{instrument}"
 
-        Uses Grok to search X and analyze sentiment in one call.
-        """
+        # Check Redis cache
+        if _redis_client:
+            try:
+                cached = await _redis_client.get(cache_key)
+                if cached:
+                    d = json.loads(cached)
+                    logger.debug("grok_cache_hit", sector=sector)
+                    return SocialSentiment(**d)
+            except Exception:
+                pass
+
         client = await self._ensure_client()
 
         queries = SECTOR_QUERIES.get(sector, SECTOR_QUERIES["index"])
@@ -113,7 +124,7 @@ Return ONLY the JSON, no other text."""
 
             result = json.loads(content.strip())
 
-            return SocialSentiment(
+            sentiment = SocialSentiment(
                 score=float(result.get("score", 0)),
                 positive_pct=float(result.get("positive_pct", 0)),
                 negative_pct=float(result.get("negative_pct", 0)),
@@ -123,6 +134,17 @@ Return ONLY the JSON, no other text."""
                 key_posts=result.get("key_posts", [])[:5],
                 source="grok_x",
             )
+
+            # Cache in Redis
+            if _redis_client:
+                try:
+                    from dataclasses import asdict
+                    await _redis_client.set(cache_key, json.dumps(asdict(sentiment)), ex=CACHE_TTL)
+                    logger.debug("grok_cached", sector=sector, ttl=CACHE_TTL)
+                except Exception:
+                    pass
+
+            return sentiment
 
         except httpx.HTTPStatusError as e:
             logger.warning("grok_api_error", status=e.response.status_code,
