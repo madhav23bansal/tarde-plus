@@ -108,17 +108,39 @@ export interface ActivityEntry {
   }>;
 }
 
+export interface TradingStatus {
+  capital: number;
+  starting_capital: number;
+  buying_power: number;
+  leverage: number;
+  net_equity: number;
+  day_pnl: number;
+  day_charges: number;
+  day_trades: number;
+  day_wins: number;
+  day_losses: number;
+  win_rate: number;
+  max_drawdown: number;
+  positions: Record<string, any>;
+  open_position_count: number;
+  total_unrealized_pnl: number;
+  recent_orders: any[];
+  closed_trades: any[];
+  broker: string;
+}
+
 interface Store {
   connected: boolean;
   status: MarketStatus | null;
   predictions: Prediction[];
   history: HistoryEntry[];
   activity: ActivityEntry[];
+  trading: TradingStatus | null;
   session: string;
   collectionCount: number;
   updatedAt: number;
-  lastWsMessage: number;      // any WS message (heartbeat or update)
-  lastActivityAt: number;     // only when activity/predictions change (init/update)
+  lastWsMessage: number;
+  lastActivityAt: number;
   updateSeq: number;
 }
 
@@ -128,6 +150,7 @@ export const useStore = create<Store>(() => ({
   predictions: [],
   history: [],
   activity: [],
+  trading: null,
   session: "closed",
   collectionCount: 0,
   updatedAt: 0,
@@ -152,6 +175,7 @@ function applyMessage(msg: any) {
       predictions: preds,
       history: msg.history ?? s.history,
       activity: msg.activity ?? s.activity,
+      trading: msg.trading ?? s.trading,
       session: msg.status?.market?.session ?? s.session,
       collectionCount: msg.predictions?.collection_count ?? s.collectionCount,
       updatedAt: msg.predictions?.updated_at ?? s.updatedAt,

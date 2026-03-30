@@ -50,6 +50,7 @@ from trade_plus.market_data.market_hours import (
 )
 from trade_plus.market_data.signal_collector import SignalCollector
 from trade_plus.prediction import PredictionEngine
+from trade_plus.trading.paper_trader import PaperTrader
 
 # ── Config + DB connections ───────────────────────────────────────
 
@@ -70,6 +71,7 @@ _state = {
     "cycle_details": {},
     "db_status": {"redis": False, "timescaledb": False},
     "last_accuracy": {},
+    "paper_trader": None,
 }
 
 POLL_INTERVAL_SEC = 120
@@ -186,6 +188,11 @@ async def _collection_loop():
     collector = SignalCollector()
     engine = PredictionEngine()
 
+    # Initialize paper trader
+    trader = PaperTrader(capital=50_000.0, leverage=5.0, broker="shoonya")
+    _state["paper_trader"] = trader
+    logger.info("paper_trader_initialized", capital=trader.capital, leverage=trader.leverage)
+
     # Inject Redis for AI API caching
     if _state["db_status"]["redis"]:
         collector.set_redis_cache(_redis.client)
@@ -214,6 +221,32 @@ async def _collection_loop():
 
             run_id = uuid.uuid4()
             run_id_str = str(run_id)
+
+            # ── Paper trading: execute trades based on predictions ──
+            if session == MarketSession.REGULAR and can_open_new_position():
+                prices = {t: s.price for t, s in snapshot.instruments.items() if s.price > 0}
+                trader.update_prices(prices)
+                trader.check_stop_losses(prices)
+
+                for pred in predictions:
+                    snap = snapshot.instruments.get(pred.instrument)
+                    if not snap or snap.price <= 0:
+                        continue
+                    should, reason = trader.should_trade(
+                        pred.instrument, pred.direction, pred.confidence, pred.score,
+                    )
+                    if should:
+                        trader.execute_entry(
+                            pred.instrument, pred.direction, snap.price,
+                            pred.score, run_id_str, reason,
+                        )
+
+            # Square off at 3:15 PM
+            if session == MarketSession.REGULAR and should_squareoff():
+                prices = {t: s.price for t, s in snapshot.instruments.items() if s.price > 0}
+                closed = trader.square_off_all(prices)
+                if closed:
+                    logger.info("paper_squareoff", closed=len(closed))
 
             _state["last_snapshot"] = snapshot
             _state["last_predictions"] = predictions
@@ -372,12 +405,14 @@ async def _collection_loop():
                 logger.warning("db_write_failed", error=str(db_err))
 
             # Broadcast to all WebSocket clients
+            trading_status = trader.get_status() if trader else {}
             await _broadcast({
                 "type": "update",
                 "status": _build_status_payload(),
                 "predictions": _build_predictions_payload(),
                 "history": _state["history"][-20:],
                 "activity": _state["activity_log"][-10:],
+                "trading": trading_status,
             })
 
             logger.info(
@@ -588,12 +623,14 @@ async def websocket_endpoint(ws: WebSocket):
 
     # Send current state immediately
     try:
+        trader = _state.get("paper_trader")
         await ws.send_text(json.dumps({
             "type": "init",
             "status": _build_status_payload(),
             "predictions": _build_predictions_payload(),
             "history": _state["history"][-20:],
             "activity": _state["activity_log"][-10:],
+            "trading": trader.get_status() if trader else {},
         }, default=str))
     except Exception:
         _ws_queues.pop(wid, None)
@@ -639,6 +676,22 @@ async def get_status():
 @app.get("/api/predictions")
 async def get_predictions():
     return _build_predictions_payload()
+
+@app.get("/api/trading")
+async def get_trading():
+    """Paper trading status — capital, positions, P&L, orders."""
+    trader = _state.get("paper_trader")
+    if not trader:
+        return {"error": "Paper trader not initialized"}
+    return trader.get_status()
+
+@app.get("/api/trading/day-result")
+async def get_day_result():
+    """End of day trading summary."""
+    trader = _state.get("paper_trader")
+    if not trader:
+        return {"error": "Paper trader not initialized"}
+    return trader.get_day_result().to_dict()
 
 @app.get("/api/instruments")
 async def get_instruments():

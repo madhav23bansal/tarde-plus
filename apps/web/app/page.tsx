@@ -81,7 +81,8 @@ function Header() {
     <header className="sticky top-0 z-50 bg-[#0a0a0f]/95 backdrop-blur-md border-b border-zinc-800/60 select-none">
       <div className="max-w-[1600px] mx-auto px-5 h-11 flex items-center justify-between text-xs">
         <div className="flex items-center gap-3">
-          <Zap className="h-4 w-4 text-blue-500"/><span className="font-bold text-sm tracking-tight text-zinc-100">TRADE-PLUS</span>
+          <Zap className="h-4 w-4 text-blue-500"/><Link href="/" className="font-bold text-sm tracking-tight text-zinc-100 hover:text-white">TRADE-PLUS</Link>
+          <Link href="/trades" className="text-[10px] text-zinc-500 hover:text-zinc-300 border border-zinc-800 hover:border-zinc-600 px-2 py-0.5 rounded transition-colors">Trades</Link>
           <Tip text="Current NSE session"><span className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded border font-bold tracking-widest text-[10px] cursor-help",s.c)}>
             {s.dot&&<span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute h-full w-full rounded-full bg-current opacity-40"/><span className="relative rounded-full h-1.5 w-1.5 bg-current"/></span>}{s.l}
           </span></Tip>
@@ -362,7 +363,7 @@ function SystemInfo(){
 
 export default function Home(){
   useTick();
-  const{connected,predictions,status,updateSeq,activity,history}=useStore();
+  const{connected,predictions,status,updateSeq,activity,history,trading}=useStore();
   const hasPreds = predictions.length > 0;
   const isLoading = connected && !hasPreds;
   const isDisconnected = !connected && !hasPreds;
@@ -377,6 +378,24 @@ export default function Home(){
         )}
         {status?.market?.should_squareoff&&(
           <div className="flex items-center gap-2 bg-red-500/8 border border-red-500/20 rounded-lg px-4 py-2.5 text-xs text-red-400 font-bold animate-pulse"><AlertTriangle className="h-4 w-4"/>SQUARE OFF — Close MIS before 3:20 PM</div>
+        )}
+
+        {/* Trading summary bar */}
+        {trading && trading.day_trades > 0 && (
+          <Link href="/trades" className={cn("flex items-center justify-between rounded-lg border px-4 py-2 transition-colors hover:brightness-110",
+            trading.day_pnl >= 0 ? "border-emerald-900/30 bg-emerald-500/[0.03]" : "border-red-900/30 bg-red-500/[0.03]"
+          )}>
+            <div className="flex items-center gap-4 text-xs">
+              <span className="text-zinc-500">Paper Trading</span>
+              <span className={cn("font-mono font-bold", trading.day_pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
+                P&L: Rs {trading.day_pnl >= 0 ? "+" : ""}{trading.day_pnl?.toFixed(2)}
+              </span>
+              <span className="text-zinc-600">Trades: {trading.day_trades}</span>
+              <span className="text-zinc-600">Win: {(trading.win_rate * 100)?.toFixed(0)}%</span>
+              <span className="text-zinc-600">Positions: {trading.open_position_count}</span>
+            </div>
+            <span className="text-[10px] text-zinc-600">View details →</span>
+          </Link>
         )}
 
         {/* Global + NSE bars */}
