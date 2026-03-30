@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from trade_plus.instruments import Direction
-from trade_plus.prediction import Prediction
+from trade_plus.prediction import DailyBias
 from trade_plus.trading.levels import DayLevels, Level, compute_levels, set_opening_range, set_oi_levels
 from trade_plus.trading.paper_trader import PaperTrader, Order
 
@@ -53,7 +53,7 @@ class IntradayTrader:
         self.levels: dict[str, DayLevels] = {}
         self.bias: dict[str, Direction] = {}
         self.bias_score: dict[str, float] = {}
-        self.last_prediction: dict[str, Prediction] = {}
+        self.last_prediction: dict[str, DailyBias] = {}
         self.intraday: dict[str, dict] = {}
         self.round_trips: dict[str, int] = {}
         self.oi_data: dict = {}
@@ -132,7 +132,7 @@ class IntradayTrader:
 
     # ── Trading decisions ────────────────────────────────────────
 
-    def decide(self, instrument: str, prediction: Prediction, price: float) -> dict:
+    def decide(self, instrument: str, prediction: DailyBias, price: float) -> dict:
         """Make a trading decision. Returns decision dict for dashboard + execution."""
         self.last_prediction[instrument] = prediction
         t = self._time()
@@ -300,7 +300,7 @@ class IntradayTrader:
 
         return decision
 
-    def _check_position(self, instrument: str, price: float, prediction: Prediction, dl: DayLevels | None, ind: dict) -> dict:
+    def _check_position(self, instrument: str, price: float, prediction: DailyBias, dl: DayLevels | None, ind: dict) -> dict:
         """Check stop/target for an open position."""
         pos = self.trader.positions[instrument]
         decision = {"instrument": instrument, "action": "HOLD", "reasons": [], "confidence": prediction.confidence, "score": prediction.score, "level": None}
