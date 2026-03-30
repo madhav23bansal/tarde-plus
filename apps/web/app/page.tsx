@@ -164,7 +164,14 @@ function Card({pred,seq}:{pred:Prediction;seq:number}){
       <div className={cn("h-0.5 rounded-t-xl",`bg-${dc}-500/50`)}/>
       <div className="p-3.5 space-y-2.5">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2"><Icon className={cn("h-4 w-4",meta.color)}/><span className="text-sm font-semibold text-zinc-200">{meta.label}</span><span className="text-[10px] text-zinc-600">{pred.instrument}</span></div>
+          <div className="flex items-center gap-2">
+            <Icon className={cn("h-4 w-4",meta.color)}/>
+            <span className="text-sm font-semibold text-zinc-200">{meta.label}</span>
+            <span className="text-[10px] text-zinc-600">{pred.instrument}</span>
+            <Tip text={pred.method==="ensemble"?"Prediction blends ML model + rule-based analysis":pred.method==="ml"?"ML model only":"Rule-based analysis only"}>
+              <span className="text-[8px] text-zinc-600 bg-zinc-800 px-1 py-px rounded cursor-help uppercase tracking-wider">{pred.method}</span>
+            </Tip>
+          </div>
           <Tip text={pred.direction==="LONG"?"BUY signal — expects price UP":pred.direction==="SHORT"?"SELL signal — expects price DOWN":"No clear signal"}>
             <span className={cn("text-[10px] font-black tracking-widest px-2 py-0.5 rounded cursor-help",
               pred.direction==="LONG"?"text-emerald-400 bg-emerald-500/10":pred.direction==="SHORT"?"text-red-400 bg-red-500/10":"text-zinc-600 bg-zinc-800")}>

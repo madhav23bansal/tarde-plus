@@ -20,7 +20,7 @@ logger = structlog.get_logger()
 
 # Redis cache (set externally by signal_collector)
 _redis_client = None
-CACHE_TTL = 600  # 10 minutes
+CACHE_TTL = 1800  # 30 minutes — news doesn't change every 2min, save API credits
 
 PARALLEL_BASE_URL = "https://api.parallel.ai"
 
