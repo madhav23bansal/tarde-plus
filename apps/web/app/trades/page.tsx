@@ -30,8 +30,8 @@ function Stat({ label, value, color, icon: Icon, tip }: {
 }
 
 export default function TradesPage() {
-  useTick(1000);  // re-render every second for live updates
-  const { trading, connected } = useStore();
+  useTick(1000);
+  const { trading, connected, momentum, livePrices, fastLoopCount } = useStore();
 
   // Also fetch from REST as fallback
   const [restData, setRestData] = useState<TradingStatus | null>(null);
@@ -115,6 +115,110 @@ export default function TradesPage() {
             <Stat label="Open Positions" value={t.open_position_count} icon={BarChart3}
               color={t.open_position_count > 0 ? "text-blue-400" : "text-zinc-500"} />
           </div>
+
+          {/* ── Scalper Live State ── */}
+          {momentum && Object.keys(momentum).filter(k => !k.startsWith('_')).length > 0 && (
+            <div className="rounded-xl border border-zinc-800/50 bg-[#0c0c11] overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-zinc-800/40 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap className="h-3.5 w-3.5 text-blue-500" />
+                  <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider">Scalper Live State</span>
+                  <span className="text-[10px] text-zinc-600 font-mono">Tick #{fastLoopCount} (every 30s)</span>
+                </div>
+                {momentum._circuit && (
+                  <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded",
+                    momentum._circuit.broken ? "text-red-400 bg-red-500/10" : "text-emerald-400 bg-emerald-500/10"
+                  )}>
+                    {momentum._circuit.broken ? `PAUSED: ${momentum._circuit.reason}` : "Active"}
+                  </span>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-zinc-500 bg-zinc-900/50">
+                    <th className="text-left py-2 px-4">Instrument</th>
+                    <th className="text-center py-2 px-2">Bias</th>
+                    <th className="text-center py-2 px-2">RSI 5m</th>
+                    <th className="text-center py-2 px-2">EMA</th>
+                    <th className="text-center py-2 px-2">VWAP</th>
+                    <th className="text-right py-2 px-2">Mom 25m</th>
+                    <th className="text-center py-2 px-2">BB</th>
+                    <th className="text-center py-2 px-2">Trades</th>
+                    <th className="text-center py-2 px-2">Cooldown</th>
+                    <th className="text-right py-2 px-2">Price</th>
+                    <th className="text-right py-2 px-2">Latency</th>
+                  </tr></thead>
+                  <tbody>
+                    {Object.entries(momentum).filter(([k]) => !k.startsWith('_')).map(([inst, m]: [string, any]) => {
+                      const lp = livePrices?.[inst];
+                      const biasColor = m.bias === "LONG" ? "text-emerald-400 bg-emerald-500/10" : m.bias === "SHORT" ? "text-red-400 bg-red-500/10" : "text-zinc-600 bg-zinc-800";
+
+                      // Entry conditions check (mirrors scalper logic)
+                      let conditions = 0;
+                      const isBull = m.bias === "LONG";
+                      const isBear = m.bias === "SHORT";
+                      if (isBull) {
+                        if (m.momentum_25m > 0.15) conditions++;
+                        if (m.above_vwap) conditions++;
+                        if (m.intraday_rsi < 65) conditions++;
+                        if (m.intraday_ema_trend === "BULL") conditions++;
+                        if (m.intraday_bb_position < 0.7) conditions++;
+                      } else if (isBear) {
+                        if (m.momentum_25m < -0.15) conditions++;
+                        if (!m.above_vwap) conditions++;
+                        if (m.intraday_rsi > 35) conditions++;
+                        if (m.intraday_ema_trend === "BEAR") conditions++;
+                        if (m.intraday_bb_position > 0.3) conditions++;
+                      }
+
+                      return (
+                        <tr key={inst} className="border-t border-zinc-800/20">
+                          <td className="py-2 px-4">
+                            <span className="font-semibold text-zinc-200">{inst}</span>
+                            {conditions >= 3 && m.bias !== "FLAT" && (
+                              <span className="ml-2 text-[9px] text-blue-400 font-bold animate-pulse">READY ({conditions}/5)</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", biasColor)}>
+                              {m.bias} {m.bias_score > 0 ? "+" : ""}{m.bias_score?.toFixed(2)}
+                            </span>
+                          </td>
+                          <td className={cn("py-2 px-2 text-center font-mono", m.intraday_rsi < 30 ? "text-emerald-400" : m.intraday_rsi > 70 ? "text-red-400" : "text-zinc-300")}>
+                            {m.intraday_rsi?.toFixed(0)}
+                          </td>
+                          <td className={cn("py-2 px-2 text-center font-mono font-semibold", m.intraday_ema_trend === "BULL" ? "text-emerald-400" : "text-red-400")}>
+                            {m.intraday_ema_trend}
+                          </td>
+                          <td className={cn("py-2 px-2 text-center", m.above_vwap ? "text-emerald-400" : "text-red-400")}>
+                            {m.above_vwap ? "Above" : "Below"} <span className="text-zinc-600 font-mono">{m.intraday_vwap?.toFixed(2)}</span>
+                          </td>
+                          <td className={cn("py-2 px-2 text-right font-mono tabular-nums", m.momentum_25m > 0.1 ? "text-emerald-400" : m.momentum_25m < -0.1 ? "text-red-400" : "text-zinc-500")}>
+                            {m.momentum_25m > 0 ? "+" : ""}{m.momentum_25m?.toFixed(3)}%
+                          </td>
+                          <td className={cn("py-2 px-2 text-center font-mono", m.intraday_bb_position < 0.2 ? "text-emerald-400" : m.intraday_bb_position > 0.8 ? "text-red-400" : "text-zinc-400")}>
+                            {m.intraday_bb_position?.toFixed(2)}
+                          </td>
+                          <td className="py-2 px-2 text-center text-zinc-500">{m.trades_today}/4</td>
+                          <td className="py-2 px-2 text-center">
+                            {m.cooldown > 0 ? <span className="text-amber-400 font-mono">{m.cooldown}</span> : <span className="text-zinc-700">—</span>}
+                          </td>
+                          <td className="py-2 px-2 text-right font-mono text-zinc-300">{lp?.price?.toFixed(2) ?? "—"}</td>
+                          <td className="py-2 px-2 text-right font-mono text-zinc-700">{lp?.fetch_ms?.toFixed(0) ?? "—"}ms</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {momentum._circuit && (
+                <div className="px-4 py-2 border-t border-zinc-800/30 flex items-center gap-3 text-xs text-zinc-500">
+                  <span>Consecutive losses: {momentum._circuit.consecutive_losses}</span>
+                  <span>Day P&L: Rs {momentum._circuit.day_pnl?.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Open Positions ── */}
           <div className="rounded-xl border border-zinc-800/50 bg-[#0c0c11] overflow-hidden">

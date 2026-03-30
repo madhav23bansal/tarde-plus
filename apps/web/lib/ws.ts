@@ -136,6 +136,9 @@ interface Store {
   history: HistoryEntry[];
   activity: ActivityEntry[];
   trading: TradingStatus | null;
+  momentum: Record<string, any> | null;   // fast-loop intraday indicators per instrument
+  livePrices: Record<string, any> | null;  // latest prices with fetch latency
+  fastLoopCount: number;
   session: string;
   collectionCount: number;
   updatedAt: number;
@@ -151,6 +154,9 @@ export const useStore = create<Store>(() => ({
   history: [],
   activity: [],
   trading: null,
+  momentum: null,
+  livePrices: null,
+  fastLoopCount: 0,
   session: "closed",
   collectionCount: 0,
   updatedAt: 0,
@@ -193,6 +199,9 @@ function applyMessage(msg: any) {
     // Fast loop trading updates (every 30s during market hours)
     useStore.setState((s) => ({
       trading: msg.trading ?? s.trading,
+      momentum: msg.momentum ?? s.momentum,
+      livePrices: msg.prices ?? s.livePrices,
+      fastLoopCount: msg.fast_loop ?? s.fastLoopCount,
       lastWsMessage: now,
     }));
   }

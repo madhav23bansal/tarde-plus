@@ -157,6 +157,10 @@ function Card({pred,seq}:{pred:Prediction;seq:number}){
   const Icon=meta.icon;const isUp=(md?.change_pct??0)>=0;
   const prev=useRef(seq);const[flash,setFlash]=useState(false);
   useEffect(()=>{if(seq!==prev.current){prev.current=seq;setFlash(true);const t=setTimeout(()=>setFlash(false),800);return()=>clearTimeout(t);}},[seq]);
+  const {momentum,trading,livePrices}=useStore();
+  const mom=momentum?.[pred.instrument];
+  const pos=trading?.positions?.[pred.instrument];
+  const lp=livePrices?.[pred.instrument];
   const dc=pred.direction==="LONG"?"emerald":pred.direction==="SHORT"?"red":"zinc";
   return(
     <div className={cn("rounded-xl border bg-[#0c0c11] transition-all duration-300",
@@ -235,6 +239,43 @@ function Card({pred,seq}:{pred:Prediction;seq:number}){
               ML:{pred.ensemble.ml_score>0?"+":""}{pred.ensemble.ml_score.toFixed(2)} R:{pred.ensemble.rules_score>0?"+":""}{pred.ensemble.rules_score.toFixed(2)}
             </span>
           </Tip>)}
+        </div>)}
+        {/* ── Intraday Fast Loop (live scalper data) ── */}
+        {mom&&(<div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-[9px] text-zinc-600 uppercase tracking-wider">
+            <Zap className="h-3 w-3 text-blue-500"/>Intraday (30s loop)
+          </div>
+          <div className="grid grid-cols-5 gap-px bg-zinc-800/30 rounded overflow-hidden">
+            <Tip text="Intraday RSI from 5-min candles stored in DB — much more responsive than daily RSI"><div className="bg-[#0a0a0f] py-1.5 px-1 text-center cursor-help">
+              <p className="text-[8px] text-zinc-600">RSI 5m</p>
+              <p className={cn("text-[11px] font-mono font-semibold",mom.intraday_rsi<30?"text-emerald-400":mom.intraday_rsi>70?"text-red-400":"text-zinc-300")}>{mom.intraday_rsi?.toFixed(0)}</p>
+            </div></Tip>
+            <Tip text="Intraday EMA 9/21 trend from stored 5-min candles"><div className="bg-[#0a0a0f] py-1.5 px-1 text-center cursor-help">
+              <p className="text-[8px] text-zinc-600">EMA</p>
+              <p className={cn("text-[11px] font-mono font-semibold",mom.intraday_ema_trend==="BULL"?"text-emerald-400":"text-red-400")}>{mom.intraday_ema_trend}</p>
+            </div></Tip>
+            <Tip text={`Intraday VWAP (volume-weighted average price): ${mom.intraday_vwap?.toFixed(2)} — price ${mom.above_vwap?"ABOVE":"BELOW"} VWAP`}><div className="bg-[#0a0a0f] py-1.5 px-1 text-center cursor-help">
+              <p className="text-[8px] text-zinc-600">VWAP</p>
+              <p className={cn("text-[11px] font-mono font-semibold",mom.above_vwap?"text-emerald-400":"text-red-400")}>{mom.above_vwap?"Above":"Below"}</p>
+            </div></Tip>
+            <Tip text="25-minute price momentum — minimum 0.15% needed to enter a trade"><div className="bg-[#0a0a0f] py-1.5 px-1 text-center cursor-help">
+              <p className="text-[8px] text-zinc-600">Mom 25m</p>
+              <p className={cn("text-[11px] font-mono font-semibold tabular-nums",mom.momentum_25m>0.1?"text-emerald-400":mom.momentum_25m<-0.1?"text-red-400":"text-zinc-500")}>{mom.momentum_25m>0?"+":""}{mom.momentum_25m?.toFixed(3)}%</p>
+            </div></Tip>
+            <Tip text="Intraday Bollinger Band position — 0=lower band, 1=upper band"><div className="bg-[#0a0a0f] py-1.5 px-1 text-center cursor-help">
+              <p className="text-[8px] text-zinc-600">BB 5m</p>
+              <p className={cn("text-[11px] font-mono font-semibold",mom.intraday_bb_position<0.2?"text-emerald-400":mom.intraday_bb_position>0.8?"text-red-400":"text-zinc-400")}>{mom.intraday_bb_position?.toFixed(2)}</p>
+            </div></Tip>
+          </div>
+          {/* Position + scalper status */}
+          <div className="flex gap-2 text-[10px] flex-wrap">
+            {pos&&(<span className={cn("font-mono font-bold",pos.unrealized_pnl>=0?"text-emerald-400":"text-red-400")}>
+              {pos.side} {pos.quantity}x P&L={pos.unrealized_pnl>=0?"+":""}{pos.unrealized_pnl?.toFixed(2)}
+            </span>)}
+            {mom.trades_today>0&&<span className="text-zinc-600">Trades: {mom.trades_today}/4</span>}
+            {mom.cooldown>0&&<span className="text-amber-500">Cooldown: {mom.cooldown} ticks</span>}
+            {lp&&<span className="text-zinc-700 ml-auto">{lp.fetch_ms?.toFixed(0)}ms</span>}
+          </div>
         </div>)}
       </div>
     </div>
