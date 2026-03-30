@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  turbopack: {
+    root: ".",  // Watch only this app, not the monorepo root
+  },
   async rewrites() {
     return [
       {
