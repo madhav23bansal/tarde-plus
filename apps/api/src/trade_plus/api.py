@@ -102,6 +102,15 @@ async def _broadcast(message: dict):
             pass  # drop if client is too slow
 
 
+def _safe_float(v, default=0.0):
+    """Convert to JSON-safe float (NaN/Inf → default)."""
+    import math
+    try:
+        f = float(v)
+        return default if math.isnan(f) or math.isinf(f) else f
+    except (TypeError, ValueError):
+        return default
+
 def _build_predictions_payload() -> dict:
     predictions = _state["last_predictions"]
     snapshot = _state["last_snapshot"]  # SignalSnapshot
@@ -132,43 +141,33 @@ def _build_predictions_payload() -> dict:
         # Market data from snapshot
         if snapshot:
             entry["market_data"] = {
-                "price": snapshot.nifty_close,
+                "price": _safe_float(snapshot.nifty_close),
                 "prev_close": 0,
-                "change_pct": snapshot.nifty_change,
-                "day_high": 0,
-                "day_low": 0,
-                "volume": 0,
-                "volume_ratio": snapshot.volume_ratio,
-                "rsi_14": snapshot.rsi_14,
-                "macd_histogram": 0,
-                "bb_position": 0,
-                "ema_9": 0,
-                "ema_21": 0,
-                "atr_14": 0,
-                "returns_1d": snapshot.returns_1d,
-                "returns_5d": snapshot.returns_5d,
+                "change_pct": _safe_float(snapshot.nifty_change),
+                "day_high": 0, "day_low": 0, "volume": 0,
+                "volume_ratio": _safe_float(snapshot.volume_ratio),
+                "rsi_14": _safe_float(snapshot.rsi_14, 50),
+                "macd_histogram": 0, "bb_position": 0,
+                "ema_9": 0, "ema_21": 0, "atr_14": 0,
+                "returns_1d": _safe_float(snapshot.returns_1d),
+                "returns_5d": _safe_float(snapshot.returns_5d),
                 "returns_10d": 0,
-                "news_sentiment": 0,
-                "news_count": 0,
-                "social_sentiment": 0,
-                "social_post_count": 0,
-                "social_trending": [],
-                "ai_news_sentiment": snapshot.ai_news_sentiment,
-                "ai_news_count": snapshot.ai_news_count,
-                "ai_news_positive": 0,
-                "ai_news_negative": 0,
+                "news_sentiment": 0, "news_count": 0,
+                "social_sentiment": 0, "social_post_count": 0, "social_trending": [],
+                "ai_news_sentiment": _safe_float(snapshot.ai_news_sentiment),
+                "ai_news_count": int(snapshot.ai_news_count or 0),
+                "ai_news_positive": 0, "ai_news_negative": 0,
             }
             entry["nse_data"] = {
-                "fii_net": snapshot.fii_net,
-                "dii_net": snapshot.dii_net,
-                "india_vix": snapshot.india_vix,
-                "india_vix_change": snapshot.india_vix_change,
-                "pcr_oi": 0,
-                "ad_ratio": 0,
+                "fii_net": _safe_float(snapshot.fii_net),
+                "dii_net": _safe_float(snapshot.dii_net),
+                "india_vix": _safe_float(snapshot.india_vix),
+                "india_vix_change": _safe_float(snapshot.india_vix_change),
+                "pcr_oi": 0, "ad_ratio": 0,
             }
             entry["sector_signals"] = {
-                "sp500_change": snapshot.sp500_change,
-                "crude_oil_change": snapshot.crude_oil_change,
+                "sp500_change": _safe_float(snapshot.sp500_change),
+                "crude_oil_change": _safe_float(snapshot.crude_oil_change),
             }
 
         # Add level-based data if available
@@ -215,19 +214,28 @@ async def _collection_loop():
     _state["paper_trader"] = trader
     logger.info("paper_trader_initialized", capital=trader.capital, leverage=trader.leverage)
 
-    # Inject Redis for AI API caching
-    if _state["db_status"]["redis"]:
-        collector.set_redis_cache(_redis.client)
+    # Redis cache for Parallel AI (if configured)
+    try:
+        from trade_plus.market_data import parallel_news
+        if _state["db_status"]["redis"]:
+            parallel_news._redis_client = _redis.client
+    except Exception:
+        pass
+
+    first_run = True  # Always collect once on startup for dashboard
 
     while True:
         try:
             session = get_session()
 
-            if session == MarketSession.REGULAR:
+            # First run: always collect regardless of session (dashboard needs data)
+            if first_run:
+                interval = PRE_MARKET_INTERVAL_SEC
+            elif session == MarketSession.REGULAR:
                 interval = POLL_INTERVAL_SEC
             elif session in (MarketSession.PRE_MARKET, MarketSession.PRE_OPEN):
                 interval = PRE_MARKET_INTERVAL_SEC
-            elif session == MarketSession.CLOSED:
+            elif session in (MarketSession.CLOSED, MarketSession.POST_MARKET, MarketSession.CLOSING):
                 await asyncio.sleep(1800)
                 continue
             else:
@@ -267,6 +275,7 @@ async def _collection_loop():
             _state["last_update"] = time.time()
             _state["collection_count"] += 1
             _state["errors"] = []
+            first_run = False
 
             # Activity log entry
             act = {
@@ -282,17 +291,15 @@ async def _collection_loop():
                     "instruments": len(snapshot.instruments),
                 },
                 "predictions": {
-                    ticker: {
-                        "direction": pred.direction.value,
-                        "score": pred.score,
-                        "confidence": pred.confidence,
-                        "price": snapshot.instruments[pred.instrument].price if pred.instrument in snapshot.instruments else 0,
-                        "features": pred.features_used,
-                        "errors": snapshot.instruments[pred.instrument].errors if pred.instrument in snapshot.instruments else [],
+                    "NIFTYBEES": {
+                        "direction": predictions[0].direction.value if predictions else "FLAT",
+                        "score": _safe_float(predictions[0].score) if predictions else 0,
+                        "confidence": _safe_float(predictions[0].confidence) if predictions else 0,
+                        "price": _safe_float(snapshot.nifty_close),
+                        "features": 5,
+                        "errors": snapshot.errors,
                     }
-                    for pred in predictions
-                    for ticker in [pred.instrument]
-                },
+                } if predictions else {},
                 "status": "ok",
             }
             _state["activity_log"].append(act)
@@ -309,7 +316,7 @@ async def _collection_loop():
                 "instruments": {},
             }
             for ticker, snap in snapshot.instruments.items():
-                pred = next((p for p in predictions if p.instrument == ticker), None)
+                pred = predictions[0] if predictions else None
                 detail["instruments"][ticker] = {
                     "features": snap.to_feature_dict(),
                     "global_signals": snap.global_signals,
@@ -330,16 +337,16 @@ async def _collection_loop():
                     "returns_1d": snap.returns_1d,
                     "returns_5d": snap.returns_5d,
                     "returns_10d": snap.returns_10d,
-                    "news_sentiment": snap.news_sentiment,
-                    "news_count": snap.news_count,
-                    "social_sentiment": snap.social_sentiment,
-                    "social_positive_pct": snap.social_positive_pct,
-                    "social_negative_pct": snap.social_negative_pct,
-                    "social_post_count": snap.social_post_count,
-                    "social_trending": snap.social_trending,
-                    "ai_news_sentiment": snap.ai_news_sentiment,
-                    "ai_news_count": snap.ai_news_count,
-                    "ai_news_positive": snap.ai_news_positive,
+                    "news_sentiment": getattr(snap, 'news_sentiment', 0),
+                    "news_count": getattr(snap, 'news_count', 0),
+                    "social_sentiment": getattr(snap, 'social_sentiment', 0),
+                    "social_positive_pct": getattr(snap, 'social_positive_pct', 0),
+                    "social_negative_pct": getattr(snap, 'social_negative_pct', 0),
+                    "social_post_count": getattr(snap, 'social_post_count', 0),
+                    "social_trending": getattr(snap, 'social_trending', []),
+                    "ai_news_sentiment": getattr(snap, 'ai_news_sentiment', 0),
+                    "ai_news_count": getattr(snap, 'ai_news_count', 0),
+                    "ai_news_positive": getattr(snap, 'ai_news_positive', 0),
                     "ai_news_negative": snap.ai_news_negative,
                     "fii_net": snap.fii_net,
                     "dii_net": snap.dii_net,
@@ -349,11 +356,11 @@ async def _collection_loop():
                     "errors": snap.errors,
                     "data_staleness": snap.data_staleness,
                     "prediction": {
-                        "direction": pred.direction.value,
-                        "score": pred.score,
-                        "confidence": pred.confidence,
-                        "reasons": pred.reasons,
-                        "features_used": pred.features_used,
+                        "direction": pred.direction.value if pred else "FLAT",
+                        "score": _safe_float(pred.score) if pred else 0,
+                        "confidence": _safe_float(pred.confidence) if pred else 0,
+                        "reasons": pred.reasons if pred else [],
+                        "features_used": 5,
                     } if pred else None,
                 }
             _state["cycle_details"][run_id_str] = detail
@@ -369,7 +376,7 @@ async def _collection_loop():
                 "instruments": {},
             }
             for ticker, snap in snapshot.instruments.items():
-                pred = next((p for p in predictions if p.instrument == ticker), None)
+                pred = predictions[0] if predictions else None
                 entry["instruments"][ticker] = {
                     "price": snap.price,
                     "change_pct": snap.change_pct,
@@ -405,9 +412,10 @@ async def _collection_loop():
                             "volume": int(snap.volume),
                         })
                     for pred in predictions:
-                        await _redis.set_prediction(pred.instrument, {
+                        await _redis.set_prediction("NIFTYBEES", {
                             "direction": pred.direction.value,
-                            "score": float(pred.score), "confidence": float(pred.confidence),
+                            "score": _safe_float(pred.score),
+                            "confidence": _safe_float(pred.confidence),
                             "reasons": pred.reasons,
                         })
                     await _redis.set_pipeline_status({

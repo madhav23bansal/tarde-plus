@@ -68,6 +68,43 @@ class SignalSnapshot:
     collection_time_ms: float = 0.0
     errors: list[str] = field(default_factory=list)
 
+    # Compatibility: old code accesses snapshot.instruments["NIFTYBEES"]
+    instrument: str = "NIFTYBEES"
+    sector: str = "index"
+    price: float = 0.0          # alias for nifty_close
+    prev_close: float = 0.0
+    change_pct: float = 0.0     # alias for nifty_change
+    day_high: float = 0.0
+    day_low: float = 0.0
+    volume: int = 0
+    macd_histogram: float = 0.0
+    bb_position: float = 0.5
+    ema_9: float = 0.0
+    ema_21: float = 0.0
+    atr_14: float = 0.0
+    returns_10d: float = 0.0
+    news_sentiment: float = 0.0
+    news_count: int = 0
+    social_sentiment: float = 0.0
+    social_post_count: int = 0
+    social_trending: list = field(default_factory=list)
+    ai_news_positive: int = 0
+    ai_news_negative: int = 0
+    india_vix_change_pct: float = 0.0
+    pcr_oi: float = 0.0
+    ad_ratio: float = 0.0
+    global_signals: dict = field(default_factory=dict)
+    sector_signals: dict = field(default_factory=dict)
+    data_staleness: str = "stale"
+    session: str = ""
+
+    @property
+    def instruments(self) -> dict:
+        """Compatibility: old code expects snapshot.instruments['NIFTYBEES']."""
+        self.price = self.nifty_close
+        self.change_pct = self.nifty_change
+        return {"NIFTYBEES": self}
+
     def to_bias_signals(self) -> dict:
         """Convert to dict for BiasPredictor."""
         return {
@@ -81,6 +118,14 @@ class SignalSnapshot:
             "returns_5d": self.returns_5d,
             "volume_ratio": self.volume_ratio,
         }
+
+    def to_feature_dict(self) -> dict:
+        """Compatibility: old code calls snap.to_feature_dict() for DB storage."""
+        return self.to_db_dict()
+
+    @property
+    def feature_count(self) -> int:
+        return len(self.to_db_dict())
 
     def to_db_dict(self) -> dict:
         """All fields for DB storage (future ML training)."""
