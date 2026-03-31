@@ -118,30 +118,35 @@ def _build_predictions_payload() -> dict:
         return {"predictions": [], "message": "Collecting..."}
 
     itrader = _state.get("intraday_trader")
+    bias = predictions[0] if predictions else None
+    live_prices = _state.get("last_prices") or {}
     result = []
 
-    for bias in predictions:
-        # Build a frontend-compatible prediction object from DailyBias + live data
+    # One entry per instrument, all sharing the same daily bias
+    for inst in ALL_INSTRUMENTS:
+        lp = live_prices.get(inst.ticker)
+        price = lp.price if lp else 0
+
         entry = {
-            "instrument": "NIFTYBEES",
-            "direction": bias.direction.value,
-            "score": bias.score,
-            "confidence": bias.confidence,
-            "reasons": bias.reasons,
-            "features_used": 5,  # 5 core signals
-            "method": bias.method,
+            "instrument": inst.ticker,
+            "direction": bias.direction.value if bias else "FLAT",
+            "score": _safe_float(bias.score) if bias else 0,
+            "confidence": _safe_float(bias.confidence) if bias else 0,
+            "reasons": bias.reasons if bias else [],
+            "features_used": 5,
+            "method": bias.method if bias else "rules",
             "ensemble": {
-                "ml_score": bias.ml_score,
-                "rules_score": bias.rules_score,
+                "ml_score": _safe_float(bias.ml_score) if bias else 0,
+                "rules_score": _safe_float(bias.rules_score) if bias else 0,
                 "ml_confidence": 0,
-                "rules_confidence": bias.confidence,
+                "rules_confidence": _safe_float(bias.confidence) if bias else 0,
             },
         }
 
-        # Market data from snapshot
+        # Market data (from snapshot for shared signals, live price for instrument)
         if snapshot:
             entry["market_data"] = {
-                "price": _safe_float(snapshot.nifty_close),
+                "price": _safe_float(price or snapshot.nifty_close),
                 "prev_close": 0,
                 "change_pct": _safe_float(snapshot.nifty_change),
                 "day_high": 0, "day_low": 0, "volume": 0,
@@ -170,20 +175,23 @@ def _build_predictions_payload() -> dict:
                 "crude_oil_change": _safe_float(snapshot.crude_oil_change),
             }
 
-        # Add level-based data if available
+        # Level-based data per instrument
         if itrader:
-            levels = itrader.levels.get("NIFTYBEES")
+            levels = itrader.levels.get(inst.ticker)
             if levels:
                 entry["levels"] = levels.to_dict()
+            # Intraday state (decisions, etc.)
             status = itrader.get_status()
-            entry["intraday_state"] = status
+            decision = status.get("decisions", {}).get(inst.ticker)
+            if decision:
+                entry["decision"] = decision
 
         result.append(entry)
 
     return {
         "predictions": result,
         "updated_at": _state["last_update"],
-        "session": _state.get("last_snapshot").timestamp if _state.get("last_snapshot") else 0,
+        "session": snapshot.timestamp if snapshot else 0,
         "collection_count": _state["collection_count"],
     }
 
@@ -245,30 +253,33 @@ async def _collection_loop():
             snapshot = await collector.collect()
             collect_dur = round(time.time() - collect_start, 2)
 
-            # Generate daily bias from signals
+            # Generate daily bias from signals (same bias applies to all Nifty-tracking ETFs)
             bias = engine.predict(snapshot.to_bias_signals())
-            predictions = [bias]  # keep as list for compatibility
+            predictions = [bias]
 
             run_id = uuid.uuid4()
             run_id_str = str(run_id)
 
-            # ── Set bias + execute intraday trades ──
+            # ── Set bias + execute intraday trades for ALL instruments ──
             itrader = _state.get("intraday_trader")
             if itrader:
-                itrader.set_bias("NIFTYBEES", bias.direction, bias.score)
-                itrader.last_prediction["NIFTYBEES"] = bias
+                # Same bias for all instruments (FII/VIX/S&P affect all equally)
+                for inst in ALL_INSTRUMENTS:
+                    itrader.set_bias(inst.ticker, bias.direction, bias.score)
+                    itrader.last_prediction[inst.ticker] = bias
 
                 if session == MarketSession.REGULAR:
                     price_map = {t: p.price for t, p in (_state.get("last_prices") or {}).items()}
-                    price = price_map.get("NIFTYBEES", 0)
-                    if price > 0:
-                        decision = itrader.decide("NIFTYBEES", bias, price)
-                        order = itrader.execute(decision, price, run_id_str)
-                        if order:
-                            logger.info("intraday_trade", instrument=order.instrument,
-                                      side=order.side, qty=order.quantity, price=order.fill_price,
-                                      action=decision.get("action"),
-                                      reasons=decision.get("reasons", [])[:2])
+                    for inst in ALL_INSTRUMENTS:
+                        price = price_map.get(inst.ticker, 0)
+                        if price > 0:
+                            decision = itrader.decide(inst.ticker, bias, price)
+                            order = itrader.execute(decision, price, run_id_str)
+                            if order:
+                                logger.info("intraday_trade", instrument=order.instrument,
+                                          side=order.side, qty=order.quantity, price=order.fill_price,
+                                          action=decision.get("action"),
+                                          reasons=decision.get("reasons", [])[:2])
 
             _state["last_snapshot"] = snapshot
             _state["last_predictions"] = predictions
@@ -533,13 +544,14 @@ async def _price_monitor_loop():
                 except Exception as e:
                     logger.warning("levels_compute_failed", error=str(e))
 
-            # Fetch OI data (every 5 min during market hours)
+            # Fetch OI data for all indices (every 5 min during market hours)
             if session == MarketSession.REGULAR and time.time() - last_oi_fetch > OI_INTERVAL:
                 try:
-                    from trade_plus.trading.oi_data import fetch_nifty_oi
-                    oi = await fetch_nifty_oi()
-                    if oi and not oi.get("empty"):
-                        itrader.update_oi(oi)
+                    from trade_plus.trading.oi_data import fetch_all_oi
+                    from trade_plus.instruments import OI_INDICES
+                    all_oi = await fetch_all_oi(OI_INDICES)  # ["NIFTY", "BANKNIFTY"]
+                    if all_oi:
+                        itrader.update_oi(all_oi)
                         last_oi_fetch = time.time()
                 except Exception as e:
                     logger.debug("oi_fetch_failed", error=str(e))

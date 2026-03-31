@@ -1,12 +1,8 @@
-"""Nifty Open Interest data collector.
+"""Open Interest data collector for multiple indices.
 
-Fetches OI from NSE option chain every 5 minutes during market hours.
-Extracts:
-  - Highest Call OI strike (resistance wall)
-  - Highest Put OI strike (support wall)
-  - Max Pain strike
-  - PCR (Put-Call Ratio)
-  - OI change direction (building/unwinding)
+Fetches OI from NSE option chain for NIFTY and BANKNIFTY.
+Each returns: highest Call/Put OI strikes, Max Pain, PCR, OI change direction.
+Called every 5 minutes during market hours.
 """
 
 from __future__ import annotations
@@ -26,21 +22,24 @@ NSE_HEADERS = {
 }
 
 
-async def fetch_nifty_oi() -> dict:
-    """Fetch Nifty option chain OI data from NSE.
+async def fetch_index_oi(index_symbol: str = "NIFTY") -> dict:
+    """Fetch option chain OI data for any NSE index.
 
-    Returns dict with: oi_resistance, oi_support, max_pain, pcr,
-    top_call_strikes, top_put_strikes, total_call_oi, total_put_oi
+    Args:
+        index_symbol: "NIFTY" or "BANKNIFTY"
+
+    Returns dict with: oi_resistance, oi_support, max_pain, pcr, etc.
     """
     try:
         async with httpx.AsyncClient(headers=NSE_HEADERS, timeout=15, follow_redirects=True) as client:
-            # Get cookies
             await client.get("https://www.nseindia.com/", headers={**NSE_HEADERS, "Accept": "text/html"})
             await asyncio.sleep(1.5)
 
-            resp = await client.get("https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY")
+            resp = await client.get(
+                f"https://www.nseindia.com/api/option-chain-indices?symbol={index_symbol}"
+            )
             if resp.status_code != 200:
-                logger.warning("oi_fetch_failed", status=resp.status_code)
+                logger.warning("oi_fetch_failed", index=index_symbol, status=resp.status_code)
                 return {}
 
             data = resp.json()
@@ -49,23 +48,16 @@ async def fetch_nifty_oi() -> dict:
             spot = records.get("underlyingValue", 0)
 
             if not spot or not filtered.get("data"):
-                return {"spot": spot, "empty": True}
+                return {"index": index_symbol, "spot": spot, "empty": True}
 
-            max_call_oi = 0
-            max_call_strike = 0
-            max_put_oi = 0
-            max_put_strike = 0
-            total_call_oi = 0
-            total_put_oi = 0
-            total_call_chg = 0
-            total_put_chg = 0
-
+            max_call_oi = max_call_strike = max_put_oi = max_put_strike = 0
+            total_call_oi = total_put_oi = total_call_chg = total_put_chg = 0
             strikes = []
+
             for row in filtered["data"]:
                 ce = row.get("CE", {})
                 pe = row.get("PE", {})
                 strike = row.get("strikePrice", 0)
-
                 ce_oi = ce.get("openInterest", 0)
                 pe_oi = pe.get("openInterest", 0)
                 ce_chg = ce.get("changeinOpenInterest", 0)
@@ -83,57 +75,61 @@ async def fetch_nifty_oi() -> dict:
                     max_put_oi = pe_oi
                     max_put_strike = strike
 
-                strikes.append({
-                    "strike": strike,
-                    "call_oi": ce_oi, "put_oi": pe_oi,
-                    "call_chg": ce_chg, "put_chg": pe_chg,
-                })
+                strikes.append({"strike": strike, "call_oi": ce_oi, "put_oi": pe_oi})
 
-            # Max Pain calculation
+            # Max Pain
             max_pain_strike = 0
             min_pain_value = float("inf")
-            for expiry_price in [s["strike"] for s in strikes]:
-                total_pain = 0
-                for s in strikes:
-                    call_itm = max(0, expiry_price - s["strike"])
-                    total_pain += call_itm * s["call_oi"]
-                    put_itm = max(0, s["strike"] - expiry_price)
-                    total_pain += put_itm * s["put_oi"]
-                if total_pain < min_pain_value:
-                    min_pain_value = total_pain
-                    max_pain_strike = expiry_price
+            for ep in [s["strike"] for s in strikes]:
+                pain = sum(
+                    max(0, ep - s["strike"]) * s["call_oi"] + max(0, s["strike"] - ep) * s["put_oi"]
+                    for s in strikes
+                )
+                if pain < min_pain_value:
+                    min_pain_value = pain
+                    max_pain_strike = ep
 
             pcr = total_put_oi / total_call_oi if total_call_oi > 0 else 0
 
-            # OI change direction
+            # OI buildup direction
             oi_buildup = "neutral"
             if total_call_chg > total_put_chg * 1.5:
-                oi_buildup = "bearish"  # more call writing = resistance building
+                oi_buildup = "bearish"
             elif total_put_chg > total_call_chg * 1.5:
-                oi_buildup = "bullish"  # more put writing = support building
+                oi_buildup = "bullish"
 
             result = {
+                "index": index_symbol,
                 "spot": spot,
                 "oi_resistance": max_call_strike,
-                "oi_resistance_oi": max_call_oi,
                 "oi_support": max_put_strike,
-                "oi_support_oi": max_put_oi,
                 "max_pain": max_pain_strike,
                 "pcr": round(pcr, 3),
                 "total_call_oi": total_call_oi,
                 "total_put_oi": total_put_oi,
-                "call_oi_change": total_call_chg,
-                "put_oi_change": total_put_chg,
                 "oi_buildup": oi_buildup,
                 "timestamp": time.time(),
             }
 
-            logger.info("oi_fetched", spot=spot, resistance=max_call_strike,
-                       support=max_put_strike, max_pain=max_pain_strike, pcr=round(pcr, 2),
-                       buildup=oi_buildup)
-
+            logger.info("oi_fetched", index=index_symbol, spot=spot,
+                       resistance=max_call_strike, support=max_put_strike,
+                       pcr=round(pcr, 2), buildup=oi_buildup)
             return result
 
     except Exception as e:
-        logger.warning("oi_fetch_error", error=str(e))
+        logger.warning("oi_fetch_error", index=index_symbol, error=str(e))
         return {}
+
+
+async def fetch_all_oi(indices: list[str]) -> dict[str, dict]:
+    """Fetch OI for multiple indices. Returns {index_symbol: oi_data}.
+
+    Rate-limited: 1.5s between NSE calls.
+    """
+    results = {}
+    for idx in indices:
+        data = await fetch_index_oi(idx)
+        if data and not data.get("empty"):
+            results[idx] = data
+        await asyncio.sleep(1.5)  # NSE rate limit
+    return results

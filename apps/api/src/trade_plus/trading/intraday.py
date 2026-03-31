@@ -90,22 +90,25 @@ class IntradayTrader:
 
         self._levels_computed = True
 
-    def update_oi(self, oi_data: dict) -> None:
-        """Update OI-based levels from NSE option chain."""
-        self.oi_data = oi_data
-        if not oi_data or oi_data.get("empty"):
-            return
+    def update_oi(self, all_oi: dict[str, dict]) -> None:
+        """Update OI-based levels from NSE option chain data.
 
-        # Set OI levels on NIFTYBEES and BANKBEES (they track Nifty/BankNifty)
-        for ticker, ratio in [("NIFTYBEES", 100), ("BANKBEES", 100)]:
-            if ticker in self.levels:
+        Args:
+            all_oi: {index_symbol: oi_data} e.g. {"NIFTY": {...}, "BANKNIFTY": {...}}
+        """
+        self.oi_data = all_oi
+
+        from trade_plus.instruments import ALL_INSTRUMENTS
+        for inst in ALL_INSTRUMENTS:
+            oi = all_oi.get(inst.oi_index, {})
+            if oi and not oi.get("empty") and inst.ticker in self.levels:
                 set_oi_levels(
-                    self.levels[ticker],
-                    oi_data.get("oi_resistance", 0),
-                    oi_data.get("oi_support", 0),
-                    oi_data.get("max_pain", 0),
-                    oi_data.get("pcr", 0),
-                    nifty_to_etf_ratio=ratio,
+                    self.levels[inst.ticker],
+                    oi.get("oi_resistance", 0),
+                    oi.get("oi_support", 0),
+                    oi.get("max_pain", 0),
+                    oi.get("pcr", 0),
+                    nifty_to_etf_ratio=inst.nifty_ratio,
                 )
 
     def collect_orb_price(self, ticker: str, price: float) -> None:

@@ -20,9 +20,8 @@ function fmtDur(s: number): string { if(s<=0)return"0s"; const h=Math.floor(s/36
 
 const INST: Record<string,{label:string;icon:typeof Globe;color:string}> = {
   NIFTYBEES:{label:"Nifty 50",icon:BarChart3,color:"text-blue-400"},
-  GOLDBEES:{label:"Gold",icon:Gem,color:"text-amber-400"},
-  SILVERBEES:{label:"Silver",icon:CircleDot,color:"text-slate-300"},
   BANKBEES:{label:"Bank Nifty",icon:Landmark,color:"text-purple-400"},
+  SETFNIF50:{label:"SBI Nifty 50",icon:BarChart3,color:"text-cyan-400"},
 };
 
 const GLOBAL_TIPS: Record<string,string> = {
