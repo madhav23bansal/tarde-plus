@@ -3,213 +3,249 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useStore, type TradingStatus } from "@/lib/ws";
-import { Tip } from "@/components/tip";
 import { cn } from "@/lib/cn";
 import {
-  ArrowLeft, TrendingUp, TrendingDown, Minus, DollarSign, BarChart3,
-  Target, Shield, Zap, Clock, Activity, ArrowUpRight, ArrowDownRight,
-  Wallet, AlertTriangle, CheckCircle2, XCircle, Landmark, Globe,
-  ChevronRight,
+  ArrowLeft, Zap, Activity, BarChart3, Target, AlertTriangle,
+  Wallet, DollarSign, CheckCircle2, XCircle, ChevronRight, TrendingUp, TrendingDown,
 } from "lucide-react";
 
-function useTick(ms=1000){const[,s]=useState(0);useEffect(()=>{const i=setInterval(()=>s(t=>t+1),ms);return()=>clearInterval(i)},[ms])}
+function useTick(ms = 1000) { const [, s] = useState(0); useEffect(() => { const i = setInterval(() => s(t => t + 1), ms); return () => clearInterval(i); }, [ms]); }
 
-const INST:Record<string,{label:string;color:string}>={
-  NIFTYBEES:{label:"Nifty 50",color:"text-blue-400"},
-  BANKBEES:{label:"Bank Nifty",color:"text-purple-400"},
-  SETFNIF50:{label:"SBI Nifty 50",color:"text-cyan-400"},
-};
+const INST: Record<string, string> = { NIFTYBEES: "Nifty 50", BANKBEES: "Bank Nifty", SETFNIF50: "SBI Nifty" };
 
-function Stat({label,value,color,icon:Icon,tip}:{label:string;value:string|number;color?:string;icon?:typeof DollarSign;tip?:string}){
-  const c=(
-    <div className="rounded-lg border border-zinc-800/50 bg-[#0c0c11] px-4 py-3">
-      <div className="flex items-center gap-2 mb-1">{Icon&&<Icon className="h-3.5 w-3.5 text-zinc-600"/>}<p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p></div>
-      <p className={cn("text-lg font-bold font-mono tabular-nums",color??"text-zinc-200")}>{value}</p>
-    </div>
-  );
-  return tip?<Tip text={tip}><div className="cursor-help">{c}</div></Tip>:c;
-}
+export default function TradesPage() {
+  useTick();
+  const { trading, connected } = useStore();
+  const [rest, setRest] = useState<TradingStatus | null>(null);
+  useEffect(() => {
+    const f = () => fetch("/api/trading").then(r => r.json()).then(d => { if (!d.error) setRest(d); }).catch(() => {});
+    f(); const i = setInterval(f, 3000); return () => clearInterval(i);
+  }, []);
+  const t = trading ?? rest;
 
-export default function TradesPage(){
-  useTick(1000);
-  const{trading,connected,momentum,livePrices,fastLoopCount}=useStore();
-
-  const[restData,setRestData]=useState<TradingStatus|null>(null);
-  useEffect(()=>{
-    const f=()=>fetch("/api/trading").then(r=>r.json()).then(d=>{if(!d.error)setRestData(d)}).catch(()=>{});
-    f();const i=setInterval(f,5000);return()=>clearInterval(i);
-  },[]);
-
-  const t=trading??restData;
-
-  return(
-    <div className="min-h-screen bg-[#08080c] text-zinc-100 font-sans pb-8">
+  return (
+    <div className="min-h-screen bg-[#08080c] text-zinc-100 font-sans">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-[#0a0a0f]/95 backdrop-blur-md border-b border-zinc-800/60">
-        <div className="max-w-[1600px] mx-auto px-5 h-11 flex items-center gap-3 text-xs">
-          <Link href="/" className="flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 transition-colors"><ArrowLeft className="h-3.5 w-3.5"/><span>Dashboard</span></Link>
+        <div className="max-w-[1440px] mx-auto px-5 h-12 flex items-center gap-4 text-xs">
+          <Link href="/" className="flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 transition-colors">
+            <ArrowLeft className="h-4 w-4" /><span>Dashboard</span>
+          </Link>
           <span className="text-zinc-800">|</span>
-          <Zap className="h-3.5 w-3.5 text-blue-500"/>
-          <span className="font-bold text-zinc-200 text-sm">Paper Trading</span>
-          {t&&<span className={cn("text-[10px] font-bold tracking-widest px-2 py-0.5 rounded border ml-2",t.day_pnl>=0?"text-emerald-400 bg-emerald-500/10 border-emerald-500/20":"text-red-400 bg-red-500/10 border-red-500/20")}>P&L: {t.day_pnl>=0?"+":""}₹{t.day_pnl?.toFixed(2)}</span>}
-          {t&&<span className="text-zinc-500 ml-auto font-mono">Capital: ₹{t.capital?.toFixed(0)} | {t.broker}</span>}
+          <Zap className="h-4 w-4 text-blue-500" />
+          <span className="font-bold text-base text-zinc-100">Trades</span>
+          {t && <span className={cn("ml-2 font-mono font-bold text-sm", t.day_pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
+            {t.day_pnl >= 0 ? "+" : ""}₹{t.day_pnl?.toFixed(2)}
+          </span>}
+          <span className="ml-auto text-zinc-600 font-mono">₹{t?.capital?.toFixed(0) ?? "50,000"} · {t?.broker ?? "shoonya"}</span>
         </div>
       </header>
 
-      <main className="max-w-[1600px] mx-auto px-5 py-4 space-y-4">
-        {!t&&(
-          <div className="text-center py-20 text-zinc-500"><Activity className="h-8 w-8 mx-auto mb-3 animate-pulse"/><p className="text-sm">Waiting for paper trader...</p></div>
-        )}
+      <main className="max-w-[1440px] mx-auto px-5 py-5 space-y-5">
+        {!t ? (
+          <div className="flex flex-col items-center justify-center py-24 gap-3 text-zinc-500">
+            <Activity className="h-8 w-8 animate-pulse" />
+            <p>Initializing paper trader...</p>
+          </div>
+        ) : (<>
 
-        {t&&(<>
-          {/* P&L Hero */}
-          <div className={cn("rounded-xl border p-5 relative overflow-hidden",t.day_pnl>=0?"border-emerald-900/30 bg-emerald-500/[0.03]":"border-red-900/30 bg-red-500/[0.03]")}>
-            <div className={cn("absolute inset-0 rounded-xl opacity-[0.015]",t.day_pnl>=0?"bg-emerald-400":"bg-red-400")} style={{filter:"blur(40px)"}}/>
-            <div className="relative flex items-start justify-between">
+          {/* ── P&L Hero ── */}
+          <div className={cn("rounded-2xl p-6 relative overflow-hidden",
+            t.day_pnl >= 0 ? "bg-gradient-to-br from-emerald-500/[0.04] to-transparent border border-emerald-500/10" :
+            "bg-gradient-to-br from-red-500/[0.04] to-transparent border border-red-500/10")}>
+            <div className="flex items-start justify-between relative">
               <div>
-                <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><DollarSign className="h-3 w-3"/>Today's Net P&L</p>
-                <p className={cn("text-5xl font-bold font-mono tabular-nums leading-none",t.day_pnl>=0?"text-emerald-400":"text-red-400")}>{t.day_pnl>=0?"+":""}₹{t.day_pnl?.toFixed(2)}</p>
-                <p className="text-xs text-zinc-600 mt-2">Gross ₹{(t.day_pnl+t.day_charges)?.toFixed(2)} <span className="text-zinc-700 mx-1.5">·</span> Charges ₹{t.day_charges?.toFixed(2)}</p>
+                <p className="text-[11px] text-zinc-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                  <DollarSign className="h-3.5 w-3.5" /> Today's P&L
+                </p>
+                <p className={cn("text-6xl font-bold font-mono tabular-nums leading-none tracking-tight",
+                  t.day_pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
+                  {t.day_pnl >= 0 ? "+" : ""}₹{t.day_pnl?.toFixed(2)}
+                </p>
+                <div className="flex items-center gap-4 mt-3 text-xs text-zinc-500">
+                  <span>Gross ₹{(t.day_pnl + t.day_charges)?.toFixed(2)}</span>
+                  <span className="text-zinc-700">·</span>
+                  <span>Charges ₹{t.day_charges?.toFixed(2)}</span>
+                  <span className="text-zinc-700">·</span>
+                  <span>{t.day_trades} trades</span>
+                </div>
               </div>
               <div className="text-right">
-                <p className="text-2xl font-bold font-mono text-zinc-200">₹{t.capital?.toFixed(0)}</p>
-                <p className="text-[10px] text-zinc-600 mt-0.5">of ₹{t.starting_capital?.toFixed(0)}</p>
-                <p className={cn("text-base font-mono font-bold mt-1",t.capital>=t.starting_capital?"text-emerald-400":"text-red-400")}>{((t.capital/t.starting_capital-1)*100)?.toFixed(2)}%</p>
+                <p className="text-3xl font-bold font-mono text-zinc-200 leading-none">₹{t.capital?.toFixed(0)}</p>
+                <p className="text-[11px] text-zinc-600 mt-1">of ₹{t.starting_capital?.toFixed(0)}</p>
+                <p className={cn("text-lg font-mono font-bold mt-2",
+                  t.capital >= t.starting_capital ? "text-emerald-400" : "text-red-400")}>
+                  {((t.capital / t.starting_capital - 1) * 100)?.toFixed(2)}%
+                </p>
               </div>
             </div>
           </div>
 
-          {/* Stats Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            <Stat label="Trades" value={t.day_trades} icon={Activity} tip="Total trades today"/>
-            <Stat label="Win Rate" value={`${(t.win_rate*100)?.toFixed(0)}%`} icon={Target} color={t.win_rate>0.5?"text-emerald-400":t.win_rate>0?"text-amber-400":"text-zinc-500"} tip="% profitable trades"/>
-            <Stat label="W / L" value={`${t.day_wins} / ${t.day_losses}`} color={t.day_wins>t.day_losses?"text-emerald-400":"text-red-400"}/>
-            <Stat label="Max DD" value={`${(t.max_drawdown*100)?.toFixed(2)}%`} icon={AlertTriangle} color={t.max_drawdown>0.05?"text-red-400":t.max_drawdown>0.02?"text-amber-400":"text-zinc-400"} tip="Peak-to-trough decline"/>
-            <Stat label="Buying Power" value={`₹${(t.buying_power/1000)?.toFixed(0)}K`} icon={Wallet} tip={`${t.leverage}x leverage`}/>
-            <Stat label="Positions" value={t.open_position_count} icon={BarChart3} color={t.open_position_count>0?"text-blue-400":"text-zinc-500"}/>
+          {/* ── Stats ── */}
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+            {([
+              ["Trades", t.day_trades, Activity, undefined],
+              ["Win Rate", `${(t.win_rate * 100)?.toFixed(0)}%`, Target, t.win_rate > 0.5 ? "text-emerald-400" : t.win_rate > 0 ? "text-amber-400" : undefined],
+              ["W / L", `${t.day_wins} / ${t.day_losses}`, undefined, t.day_wins > t.day_losses ? "text-emerald-400" : t.day_losses > 0 ? "text-red-400" : undefined],
+              ["Drawdown", `${(t.max_drawdown * 100)?.toFixed(1)}%`, AlertTriangle, t.max_drawdown > 0.03 ? "text-red-400" : undefined],
+              ["Leverage", `${t.leverage}x`, Wallet, undefined],
+              ["Positions", t.open_position_count, BarChart3, t.open_position_count > 0 ? "text-blue-400" : undefined],
+            ] as const).map(([label, value, icon, color]) => (
+              <div key={label as string} className="bg-[#0c0c11] border border-zinc-800/40 rounded-lg px-3 py-2.5">
+                <div className="flex items-center gap-1.5 mb-1">
+                  {icon && (() => { const I = icon as typeof Activity; return <I className="h-3 w-3 text-zinc-600" />; })()}
+                  <p className="text-[9px] text-zinc-600 uppercase tracking-wider">{label as string}</p>
+                </div>
+                <p className={cn("text-lg font-bold font-mono tabular-nums", (color as string) ?? "text-zinc-200")}>{value as any}</p>
+              </div>
+            ))}
           </div>
 
-          {/* Engine State */}
-          {momentum&&(momentum as any).decisions&&Object.keys((momentum as any).decisions).length>0&&(
-            <div className="rounded-xl border border-zinc-800/50 bg-[#0c0c11] overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-zinc-800/40 flex items-center justify-between">
-                <div className="flex items-center gap-2"><Zap className="h-3.5 w-3.5 text-blue-500"/><span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-[0.08em]">Engine State</span><span className="text-[10px] text-zinc-600 font-mono">Tick #{fastLoopCount}</span></div>
-                {(momentum as any)._circuit&&<span className={cn("text-[10px] font-bold px-2 py-0.5 rounded",(momentum as any)._circuit.broken?"text-red-400 bg-red-500/10":"text-emerald-400 bg-emerald-500/10")}>{(momentum as any)._circuit.broken?"PAUSED":"Active"}</span>}
-              </div>
+          {/* ── Open Positions ── */}
+          <Section title="Open Positions" count={t.open_position_count} extra={
+            t.total_unrealized_pnl !== 0 ? (
+              <span className={cn("font-mono font-bold", t.total_unrealized_pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
+                {t.total_unrealized_pnl >= 0 ? "+" : ""}₹{t.total_unrealized_pnl?.toFixed(2)}
+              </span>
+            ) : null
+          }>
+            {!Object.keys(t.positions).length ? (
+              <Empty>No open positions</Empty>
+            ) : (
               <table className="w-full text-xs">
-                <thead><tr className="text-zinc-500 bg-zinc-900/50">
-                  <th className="text-left py-2 px-4">Instrument</th>
-                  <th className="text-center py-2 px-2">Action</th>
-                  <th className="text-center py-2 px-2">Bias</th>
-                  <th className="text-left py-2 px-2">Reason</th>
-                  <th className="text-right py-2 px-2">Price</th>
+                <thead><tr className="text-zinc-500">
+                  <th className="text-left py-2 px-4 font-medium">Instrument</th>
+                  <th className="text-center py-2 px-3">Side</th>
+                  <th className="text-right py-2 px-3">Qty</th>
+                  <th className="text-right py-2 px-3">Entry</th>
+                  <th className="text-right py-2 px-3">Current</th>
+                  <th className="text-right py-2 px-4">P&L</th>
                 </tr></thead>
-                <tbody>{Object.entries((momentum as any).decisions).map(([inst,d]:[string,any])=>{
-                  const lp=livePrices?.[inst];
-                  const actionColor=d.action?.includes("LONG")?"text-emerald-400":d.action?.includes("SHORT")?"text-red-400":d.action==="HOLD"?"text-blue-400":"text-zinc-500";
-                  return(<tr key={inst} className="border-t border-zinc-800/20 hover:bg-zinc-800/10">
-                    <td className="py-2 px-4 font-semibold text-zinc-200">{INST[inst]?.label??inst}</td>
-                    <td className="py-2 px-2 text-center"><span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded",actionColor,d.action?.includes("ENTER")?"bg-current/10":"")}>{d.action}</span></td>
-                    <td className="py-2 px-2 text-center"><span className={cn("font-mono",d.score>0?"text-emerald-400":d.score<0?"text-red-400":"text-zinc-600")}>{d.score>0?"+":""}{d.score?.toFixed(2)}</span></td>
-                    <td className="py-2 px-2 text-zinc-500 truncate max-w-[250px]">{d.reasons?.[0]??""}</td>
-                    <td className="py-2 px-2 text-right font-mono text-zinc-300">{lp?.price?.toFixed(2)??"--"}</td>
-                  </tr>);
+                <tbody>{Object.entries(t.positions).map(([inst, pos]: [string, any]) => (
+                  <tr key={inst} className="border-t border-zinc-800/20">
+                    <td className="py-3 px-4 font-medium text-zinc-200">{INST[inst] ?? inst}</td>
+                    <td className="py-3 px-3 text-center"><SideBadge side={pos.side} /></td>
+                    <td className="py-3 px-3 text-right font-mono">{pos.quantity}</td>
+                    <td className="py-3 px-3 text-right font-mono text-zinc-400">₹{pos.entry_price?.toFixed(2)}</td>
+                    <td className="py-3 px-3 text-right font-mono">₹{pos.current_price?.toFixed(2)}</td>
+                    <td className={cn("py-3 px-4 text-right font-mono font-bold", pos.unrealized_pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
+                      {pos.unrealized_pnl >= 0 ? "+" : ""}₹{pos.unrealized_pnl?.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+          </Section>
+
+          {/* ── Closed Trades ── */}
+          <Section title="Trade History" count={t.closed_trades?.length ?? 0}>
+            {!t.closed_trades?.length ? (
+              <Empty>No trades completed yet</Empty>
+            ) : (
+              <div className="divide-y divide-zinc-800/20">
+                {[...t.closed_trades].reverse().map((trade: any, i: number) => (
+                  <TradeRow key={i} trade={trade} />
+                ))}
+              </div>
+            )}
+          </Section>
+
+          {/* ── Orders ── */}
+          <Section title="Order History" count={t.recent_orders?.length ?? 0}>
+            {!t.recent_orders?.length ? (
+              <Empty>No orders placed</Empty>
+            ) : (
+              <table className="w-full text-xs">
+                <thead><tr className="text-zinc-500">
+                  <th className="text-left py-2 px-4 font-medium">Time</th>
+                  <th className="text-left py-2 px-3">Instrument</th>
+                  <th className="text-center py-2 px-2">Side</th>
+                  <th className="text-right py-2 px-3">Qty</th>
+                  <th className="text-right py-2 px-3">Signal</th>
+                  <th className="text-right py-2 px-3">Fill</th>
+                  <th className="text-right py-2 px-3">Charges</th>
+                  <th className="text-center py-2 px-3">Status</th>
+                </tr></thead>
+                <tbody>{[...t.recent_orders].reverse().map((o: any, i: number) => {
+                  const time = o.placed_at ? new Date(o.placed_at * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) : "";
+                  return (
+                    <tr key={i} className="border-t border-zinc-800/20">
+                      <td className="py-2.5 px-4 font-mono text-zinc-500">{time}</td>
+                      <td className="py-2.5 px-3 text-zinc-200">{INST[o.instrument] ?? o.instrument}</td>
+                      <td className="py-2.5 px-2 text-center"><SideBadge side={o.side} /></td>
+                      <td className="py-2.5 px-3 text-right font-mono">{o.quantity}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-zinc-500">₹{o.signal_price?.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono">₹{o.fill_price?.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-zinc-600">₹{o.charges?.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-center">
+                        {o.status === "COMPLETE" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 inline" /> : <XCircle className="h-3.5 w-3.5 text-red-500 inline" />}
+                      </td>
+                    </tr>
+                  );
                 })}</tbody>
               </table>
-            </div>
-          )}
-
-          {/* Open Positions */}
-          <div className="rounded-xl border border-zinc-800/50 bg-[#0c0c11] overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-zinc-800/40 flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-[0.08em]">Open Positions ({t.open_position_count})</span>
-              {t.total_unrealized_pnl!==0&&<span className={cn("text-xs font-mono font-bold",t.total_unrealized_pnl>=0?"text-emerald-400":"text-red-400")}>Unrealized: {t.total_unrealized_pnl>=0?"+":""}₹{t.total_unrealized_pnl?.toFixed(2)}</span>}
-            </div>
-            {!Object.keys(t.positions).length?(
-              <div className="px-4 py-6 text-center text-zinc-600 text-xs border border-dashed border-zinc-800/30 m-3 rounded-lg">No open positions — waiting for price to reach a key S/R level</div>
-            ):(
-              <table className="w-full text-xs"><thead><tr className="text-zinc-500 bg-zinc-900/50">
-                <th className="text-left py-2 px-4">Instrument</th><th className="text-center py-2 px-2">Side</th><th className="text-right py-2 px-2">Qty</th><th className="text-right py-2 px-2">Entry</th><th className="text-right py-2 px-2">Current</th><th className="text-right py-2 px-4">P&L</th>
-              </tr></thead><tbody>{Object.entries(t.positions).map(([inst,pos]:[string,any])=>(
-                <tr key={inst} className="border-t border-zinc-800/20">
-                  <td className="py-2.5 px-4 font-semibold text-zinc-200">{INST[inst]?.label??inst}</td>
-                  <td className="py-2.5 px-2 text-center"><span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded",pos.side==="LONG"?"text-emerald-400 bg-emerald-500/10":"text-red-400 bg-red-500/10")}>{pos.side}</span></td>
-                  <td className="py-2.5 px-2 text-right font-mono">{pos.quantity}</td>
-                  <td className="py-2.5 px-2 text-right font-mono text-zinc-400">₹{pos.entry_price?.toFixed(2)}</td>
-                  <td className="py-2.5 px-2 text-right font-mono">₹{pos.current_price?.toFixed(2)}</td>
-                  <td className={cn("py-2.5 px-4 text-right font-mono font-bold",pos.unrealized_pnl>=0?"text-emerald-400":"text-red-400")}>{pos.unrealized_pnl>=0?"+":""}₹{pos.unrealized_pnl?.toFixed(2)}</td>
-                </tr>
-              ))}</tbody></table>
             )}
-          </div>
-
-          {/* Closed Trades */}
-          <div className="rounded-xl border border-zinc-800/50 bg-[#0c0c11] overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-zinc-800/40">
-              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-[0.08em]">Closed Trades ({t.closed_trades?.length??0})</span>
-            </div>
-            {(!t.closed_trades||!t.closed_trades.length)?(
-              <div className="px-4 py-6 text-center text-zinc-600 text-xs border border-dashed border-zinc-800/30 m-3 rounded-lg">No closed trades yet</div>
-            ):(
-              <div className="divide-y divide-zinc-800/20">{[...t.closed_trades].reverse().map((trade:any,i:number)=>(
-                <TradeRow key={i} trade={trade}/>
-              ))}</div>
-            )}
-          </div>
-
-          {/* Recent Orders */}
-          <div className="rounded-xl border border-zinc-800/50 bg-[#0c0c11] overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-zinc-800/40">
-              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-[0.08em]">Orders ({t.recent_orders?.length??0})</span>
-            </div>
-            {(!t.recent_orders||!t.recent_orders.length)?(
-              <div className="px-4 py-6 text-center text-zinc-600 text-xs border border-dashed border-zinc-800/30 m-3 rounded-lg">No orders — trades execute when price reaches a confirmed S/R level</div>
-            ):(
-              <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-zinc-500 bg-zinc-900/50">
-                <th className="text-left py-2 px-4">Time</th><th className="text-left py-2 px-2">Instrument</th><th className="text-center py-2 px-2">Side</th><th className="text-right py-2 px-2">Qty</th><th className="text-right py-2 px-2">Signal</th><th className="text-right py-2 px-2">Fill</th><th className="text-right py-2 px-2">Charges</th><th className="text-center py-2 px-2">Status</th>
-              </tr></thead><tbody>{[...t.recent_orders].reverse().map((o:any,i:number)=>{
-                const time=o.placed_at?new Date(o.placed_at*1000).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour12:false}):"";
-                return(<tr key={i} className="border-t border-zinc-800/20">
-                  <td className="py-2 px-4 font-mono text-zinc-500">{time}</td>
-                  <td className="py-2 px-2 text-zinc-200">{INST[o.instrument]?.label??o.instrument}</td>
-                  <td className="py-2 px-2 text-center"><span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded",o.side==="BUY"?"text-emerald-400 bg-emerald-500/10":"text-red-400 bg-red-500/10")}>{o.side}</span></td>
-                  <td className="py-2 px-2 text-right font-mono">{o.quantity}</td>
-                  <td className="py-2 px-2 text-right font-mono text-zinc-500">₹{o.signal_price?.toFixed(2)}</td>
-                  <td className="py-2 px-2 text-right font-mono">₹{o.fill_price?.toFixed(2)}</td>
-                  <td className="py-2 px-2 text-right font-mono text-zinc-600">₹{o.charges?.toFixed(2)}</td>
-                  <td className="py-2 px-2 text-center">{o.status==="COMPLETE"?<CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 inline"/>:<XCircle className="h-3.5 w-3.5 text-red-500 inline"/>}</td>
-                </tr>);
-              })}</tbody></table></div>
-            )}
-          </div>
+          </Section>
         </>)}
       </main>
     </div>
   );
 }
 
-function TradeRow({trade}:{trade:any}){
-  const[expanded,setExpanded]=useState(false);
-  const entryTime=trade.entry_time?new Date(trade.entry_time*1000).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour12:false}):"";
-  const exitTime=trade.exit_time?new Date(trade.exit_time*1000).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour12:false}):"";
-  const holdMin=trade.exit_time&&trade.entry_time?((trade.exit_time-trade.entry_time)/60).toFixed(0):"?";
+// ── Shared components ───────────────────────────────────────────
 
-  return(
-    <div className={cn("cursor-pointer hover:bg-zinc-800/10 transition-colors",trade.net_pnl>=0?"hover:bg-emerald-500/[0.02]":"hover:bg-red-500/[0.02]")} onClick={()=>setExpanded(e=>!e)}>
-      <div className="flex items-center gap-3 text-xs px-4 py-2.5">
-        <span className="font-mono text-zinc-500 w-14">{exitTime}</span>
-        <span className="font-semibold text-zinc-200 w-24">{INST[trade.instrument]?.label??trade.instrument}</span>
-        <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded",trade.side==="LONG"?"text-emerald-400 bg-emerald-500/10":"text-red-400 bg-red-500/10")}>{trade.side}</span>
-        <span className="font-mono text-zinc-400">₹{trade.entry_price?.toFixed(2)} → ₹{trade.exit_price?.toFixed(2)}</span>
-        <span className="text-zinc-600">{holdMin}min</span>
-        <span className={cn("font-bold font-mono ml-auto",trade.net_pnl>=0?"text-emerald-400":"text-red-400")}>{trade.net_pnl>=0?"+":""}₹{trade.net_pnl?.toFixed(2)}</span>
-        <ChevronRight className={cn("h-3.5 w-3.5 text-zinc-700 transition-transform shrink-0",expanded&&"rotate-90")}/>
+function Section({ title, count, extra, children }: { title: string; count: number; extra?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-zinc-800/40 bg-[#0c0c11] overflow-hidden">
+      <div className="px-4 py-3 border-b border-zinc-800/30 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-[0.08em]">{title}</span>
+          <span className="text-[10px] text-zinc-600 font-mono">{count}</span>
+        </div>
+        {extra}
       </div>
-      {expanded&&(
-        <div className="px-4 pb-3 pt-1 border-t border-zinc-800/20 text-[11px] text-zinc-400 space-y-1 ml-14">
-          <p><span className="text-zinc-600">Entry:</span> {entryTime} | <span className="text-zinc-600">Exit:</span> {exitTime} | <span className="text-zinc-600">Hold:</span> {holdMin} min</p>
-          <p><span className="text-zinc-600">Gross:</span> ₹{trade.gross_pnl?.toFixed(2)} <span className="text-zinc-700 mx-1">·</span> <span className="text-zinc-600">Charges:</span> ₹{trade.charges?.toFixed(2)} <span className="text-zinc-700 mx-1">·</span> <span className="text-zinc-600">Net:</span> <span className={trade.net_pnl>=0?"text-emerald-400":"text-red-400"}>{trade.net_pnl>=0?"+":""}₹{trade.net_pnl?.toFixed(2)}</span></p>
-          <p><span className="text-zinc-600">Exit reason:</span> {trade.reason}</p>
+      {children}
+    </div>
+  );
+}
+
+function Empty({ children }: { children: string }) {
+  return <div className="px-4 py-8 text-center text-zinc-600 text-xs">{children}</div>;
+}
+
+function SideBadge({ side }: { side: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded",
+      side === "BUY" || side === "LONG" ? "text-emerald-400 bg-emerald-500/10" : "text-red-400 bg-red-500/10")}>
+      {(side === "BUY" || side === "LONG") ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
+      {side}
+    </span>
+  );
+}
+
+function TradeRow({ trade }: { trade: any }) {
+  const [open, setOpen] = useState(false);
+  const exitTime = trade.exit_time ? new Date(trade.exit_time * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) : "";
+  const holdMin = trade.exit_time && trade.entry_time ? ((trade.exit_time - trade.entry_time) / 60).toFixed(0) : "?";
+
+  return (
+    <div className={cn("cursor-pointer transition-colors", trade.net_pnl >= 0 ? "hover:bg-emerald-500/[0.02]" : "hover:bg-red-500/[0.02]")}
+      onClick={() => setOpen(o => !o)}>
+      <div className="flex items-center gap-3 text-xs px-4 py-3">
+        <span className="font-mono text-zinc-500 w-14 shrink-0">{exitTime}</span>
+        <span className="font-medium text-zinc-200 w-20">{INST[trade.instrument] ?? trade.instrument}</span>
+        <SideBadge side={trade.side} />
+        <span className="font-mono text-zinc-400 text-[11px]">₹{trade.entry_price?.toFixed(2)} → ₹{trade.exit_price?.toFixed(2)}</span>
+        <span className="text-zinc-600 text-[10px]">{holdMin}m</span>
+        <span className={cn("font-bold font-mono ml-auto tabular-nums", trade.net_pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
+          {trade.net_pnl >= 0 ? "+" : ""}₹{trade.net_pnl?.toFixed(2)}
+        </span>
+        <ChevronRight className={cn("h-3 w-3 text-zinc-700 transition-transform shrink-0", open && "rotate-90")} />
+      </div>
+      {open && (
+        <div className="px-4 pb-3 text-[11px] text-zinc-500 space-y-0.5 border-t border-zinc-800/20 pt-2 ml-14">
+          <p>Gross: ₹{trade.gross_pnl?.toFixed(2)} · Charges: ₹{trade.charges?.toFixed(2)} · Hold: {holdMin}min</p>
+          <p className="text-zinc-600">{trade.reason}</p>
         </div>
       )}
     </div>
