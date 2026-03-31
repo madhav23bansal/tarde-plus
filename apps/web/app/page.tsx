@@ -8,7 +8,7 @@ import { cn } from "@/lib/cn";
 import {
   TrendingUp, TrendingDown, Minus, Clock, BarChart3,
   AlertTriangle, Wifi, WifiOff, ArrowUpRight, ArrowDownRight,
-  Globe, Landmark, Zap, Timer, Loader2, DollarSign,
+  Globe, Landmark, Zap, Timer, Loader2, DollarSign, CheckCircle2, XCircle,
 } from "lucide-react";
 
 function useTick(ms = 1000) { const [, s] = useState(0); useEffect(() => { const i = setInterval(() => s(t => t + 1), ms); return () => clearInterval(i); }, [ms]); }
@@ -279,7 +279,7 @@ function BottomBar() {
 
 export default function Home() {
   useTick();
-  const { connected, predictions, status, updateSeq, trading } = useStore();
+  const { connected, predictions, status, updateSeq, trading, activity } = useStore();
   const hasPreds = predictions.length > 0;
 
   return (
@@ -339,21 +339,69 @@ export default function Home() {
           </div>
         )}
 
-        {/* System info */}
-        {status && (
-          <div className="rounded-xl border border-zinc-800/50 bg-[#0c0c11] p-4">
-            <div className="flex items-center gap-6 text-xs text-zinc-500 flex-wrap">
-              <span>Session: <span className="text-zinc-300">{status.market.session}</span></span>
-              <span>Trading day: <span className={status.market.is_trading_day ? "text-emerald-400" : "text-zinc-600"}>{status.market.is_trading_day ? "Yes" : "No"}</span></span>
-              {status.market.is_holiday && <span className="text-amber-400">Holiday</span>}
-              <span>Redis: <span className={status.server.db.redis ? "text-emerald-400" : "text-red-400"}>●</span></span>
-              <span>TimescaleDB: <span className={status.server.db.timescaledb ? "text-emerald-400" : "text-red-400"}>●</span></span>
-              <span>WS clients: {status.server.ws_clients}</span>
-              <span>Cycle #{status.server.collection_count}</span>
-              {status.server.errors?.length > 0 && <span className="text-red-400">{status.server.errors.length} errors</span>}
+        {/* Pipeline runs + system */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Pipeline activity */}
+          <div className="lg:col-span-2 rounded-xl border border-zinc-800/40 bg-[#0c0c11] overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-zinc-800/30 flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-[0.08em]">Pipeline Runs</span>
+              <span className="text-[10px] text-zinc-600 font-mono">{activity.length} cycles</span>
             </div>
+            {!activity.length ? (
+              <div className="px-4 py-6 text-center text-zinc-600 text-xs">Waiting for first pipeline cycle...</div>
+            ) : (
+              <div className="max-h-[240px] overflow-y-auto divide-y divide-zinc-800/20">
+                {[...activity].reverse().map((a, i) => {
+                  const isOk = a.status === "ok";
+                  const time = a.timestamp?.split("T")[1]?.substring(0, 8) ?? "";
+                  const nextAt = a.next_run_at ?? 0;
+                  const rem = i === 0 && nextAt > 0 ? Math.max(0, Math.floor(nextAt - Date.now() / 1000)) : 0;
+                  return (
+                    <div key={a.run_id || a.cycle} className={cn("px-4 py-2 text-xs", i === 0 && "bg-blue-500/[0.02]")}>
+                      <div className="flex items-center gap-2">
+                        {isOk ? <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" /> : <XCircle className="h-3 w-3 text-red-500 shrink-0" />}
+                        <span className="font-mono text-zinc-400 tabular-nums">{time}</span>
+                        <span className="text-zinc-600">#{a.cycle}</span>
+                        {a.duration_sec != null && <span className="text-zinc-700 font-mono">{a.duration_sec}s</span>}
+                        {a.predictions && Object.entries(a.predictions).map(([t, p]: [string, any]) => (
+                          <span key={t} className={cn("font-mono font-bold tabular-nums",
+                            p.direction === "LONG" ? "text-emerald-400" : p.direction === "SHORT" ? "text-red-400" : "text-zinc-600")}>
+                            {INST[t]?.label?.split(" ")[0] ?? t}:{p.score > 0 ? "+" : ""}{p.score?.toFixed(2)}
+                          </span>
+                        ))}
+                        {i === 0 && rem > 0 && (
+                          <span className="text-amber-400 font-mono tabular-nums ml-auto flex items-center gap-1">
+                            <Timer className="h-3 w-3" />{fmtDur(rem)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
+
+          {/* System status */}
+          <div className="rounded-xl border border-zinc-800/40 bg-[#0c0c11] p-4 space-y-3">
+            <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-[0.08em]">System</span>
+            {status && (
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                <div className="flex justify-between"><span className="text-zinc-500">Session</span><span className="text-zinc-300">{status.market.session}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">Trading</span><span className={status.market.can_trade ? "text-emerald-400" : "text-zinc-600"}>{status.market.can_trade ? "Yes" : "No"}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">Holiday</span><span className={status.market.is_holiday ? "text-amber-400" : "text-zinc-600"}>{status.market.is_holiday ? "Yes" : "No"}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">Cycles</span><span className="text-zinc-300 font-mono">{status.server.collection_count}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">Redis</span><span className={status.server.db.redis ? "text-emerald-400" : "text-red-400"}>●</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">TimescaleDB</span><span className={status.server.db.timescaledb ? "text-emerald-400" : "text-red-400"}>●</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">WS Clients</span><span className="text-zinc-300">{status.server.ws_clients}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">Broker</span><span className="text-zinc-300">{trading?.broker ?? "—"}</span></div>
+                {status.server.errors?.length > 0 && (
+                  <div className="col-span-2 text-red-400 text-[10px]">{status.server.errors.length} errors</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       </main>
 
       <BottomBar />
