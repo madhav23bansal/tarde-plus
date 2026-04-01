@@ -1,13 +1,12 @@
 """Paper trading engine — executes mock trades using live prices.
 
-Mirrors Shoonya's order flow exactly:
+Simulates real order flow:
   1. Place order → get order_id
   2. Order fills at market price + simulated slippage
   3. Track positions, P&L, charges in real-time
   4. Square off all positions at 3:15 PM
 
-Everything is persisted to PostgreSQL for later verification.
-When switching to real Shoonya, only the execution layer changes.
+When switching to live Fyers, only the execution layer changes.
 """
 
 from __future__ import annotations
@@ -128,7 +127,7 @@ class PaperTrader:
         min_confidence: float = 0.35,     # minimum prediction confidence to trade
         stop_loss_pct: float = 0.01,      # 1% stop loss
         max_daily_loss: float = 5000.0,   # stop trading after this loss
-        broker: str = "shoonya",
+        broker: str = "fyers",
     ) -> None:
         self.starting_capital = capital
         self.capital = capital

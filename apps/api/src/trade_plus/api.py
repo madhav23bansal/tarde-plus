@@ -52,7 +52,7 @@ from trade_plus.market_data.signal_collector import SignalCollector
 from trade_plus.prediction import BiasPredictor
 from trade_plus.trading.paper_trader import PaperTrader
 from trade_plus.trading.intraday import IntradayTrader
-from trade_plus.trading.price_feed import fetch_prices
+from trade_plus.trading.fyers_feed import get_fyers_feed
 
 # ── Config + DB connections ───────────────────────────────────────
 
@@ -224,7 +224,7 @@ async def _collection_loop():
     engine = BiasPredictor()
 
     # Initialize paper trader
-    trader = PaperTrader(capital=50_000.0, leverage=5.0, broker="shoonya")
+    trader = PaperTrader(capital=50_000.0, leverage=5.0, broker="fyers")
     _state["paper_trader"] = trader
     logger.info("paper_trader_initialized", capital=trader.capital, leverage=trader.leverage)
 
@@ -501,7 +501,11 @@ async def _price_monitor_loop():
     last_oi_fetch = 0
     OI_INTERVAL = 300  # fetch OI every 5 minutes
 
-    logger.info("monitor_loop_started", mode="intraday_swing", interval=FAST_LOOP_SEC)
+    # Initialize Fyers feed (auto-fallback to yfinance if not configured)
+    feed = get_fyers_feed()
+    feed_name = "fyers" if feed.is_configured else "yfinance"
+    logger.info("monitor_loop_started", mode="intraday_swing", interval=FAST_LOOP_SEC,
+                price_feed=feed_name)
 
     while True:
         try:
@@ -564,7 +568,7 @@ async def _price_monitor_loop():
                     logger.debug("oi_fetch_failed", error=str(e))
 
             # Fetch prices
-            ticks = await fetch_prices(inst_map)
+            ticks = await feed.fetch_prices(inst_map)
             _state["last_prices"] = ticks
             _state["fast_loop_count"] += 1
 
@@ -895,6 +899,31 @@ async def get_instruments():
             for i in ALL_INSTRUMENTS
         ]
     }
+
+@app.get("/api/feed-status")
+async def get_feed_status():
+    """Check which price feed is active (Fyers or yfinance fallback)."""
+    feed = get_fyers_feed()
+    return {
+        "feed": "fyers" if feed._initialized else "yfinance",
+        "fyers_configured": feed.is_configured,
+        "fyers_connected": feed._initialized,
+        "latency": "~100ms" if feed._initialized else "~15min delayed",
+    }
+
+@app.post("/api/fyers-token")
+async def set_fyers_token(body: dict):
+    """Set Fyers access token after OAuth login.
+
+    POST /api/fyers-token {"token": "your_access_token"}
+    """
+    token = body.get("token", "")
+    if not token:
+        return {"error": "No token provided"}
+    feed = get_fyers_feed()
+    if feed.set_access_token(token):
+        return {"status": "ok", "feed": "fyers", "msg": "Real-time feed active"}
+    return {"error": "Token validation failed"}
 
 @app.get("/api/history")
 async def get_history():

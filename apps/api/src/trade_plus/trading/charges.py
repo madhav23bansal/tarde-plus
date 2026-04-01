@@ -1,4 +1,4 @@
-"""Indian broker charge calculator — exact Shoonya/Zerodha fee structure.
+"""Indian broker charge calculator — exact fee structure per broker.
 
 Calculates all statutory + broker charges for an intraday equity trade.
 Statutory charges (STT, exchange, GST, stamp duty) are fixed by regulation —
@@ -49,10 +49,10 @@ class RoundTripCharges:
 # ── Broker configs ───────────────────────────────────────────────
 
 BROKER_CONFIGS = {
-    "shoonya": {
-        "name": "Shoonya (Finvasia)",
+    "fyers": {
+        "name": "Fyers",
         "brokerage_pct": D("0.0003"),    # 0.03%
-        "brokerage_cap": D("5"),          # Rs 5 max per order
+        "brokerage_cap": D("20"),         # Rs 20 max per order
     },
     "zerodha": {
         "name": "Zerodha",
@@ -83,10 +83,10 @@ STAMP_DUTY_BUY = D("0.00003")         # 0.003% on buy side only
 def calculate_leg(
     turnover: Decimal,
     side: str,  # "BUY" or "SELL"
-    broker: str = "shoonya",
+    broker: str = "fyers",
 ) -> TradeCharges:
     """Calculate charges for one leg (buy or sell) of an intraday trade."""
-    cfg = BROKER_CONFIGS.get(broker, BROKER_CONFIGS["shoonya"])
+    cfg = BROKER_CONFIGS.get(broker, BROKER_CONFIGS["fyers"])
 
     # Brokerage: min(pct * turnover, cap)
     brokerage = min(cfg["brokerage_pct"] * turnover, cfg["brokerage_cap"])
@@ -124,7 +124,7 @@ def calculate_leg(
 def calculate_round_trip(
     buy_value: Decimal,
     sell_value: Decimal,
-    broker: str = "shoonya",
+    broker: str = "fyers",
 ) -> RoundTripCharges:
     """Calculate all charges for a complete buy+sell round trip."""
     buy_charges = calculate_leg(buy_value, "BUY", broker)
