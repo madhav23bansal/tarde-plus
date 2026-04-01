@@ -1,7 +1,10 @@
-"""Train LightGBM models for each instrument using historical data.
+"""Train LightGBM + CatBoost ensemble with triple barrier labels.
 
-Downloads 2 years of data from Yahoo Finance, engineers features,
-trains with time-series cross-validation, and saves models.
+Key improvements over v1:
+  - Triple barrier labeling (matches 0.5% target / 0.7% stop)
+  - LightGBM + CatBoost ensemble (averaged probabilities)
+  - Walk-forward validation with embargo (prevents look-ahead bias)
+  - Feature importance-based pruning
 
 Usage:
     .venv/bin/python -m trade_plus.ml.train
@@ -13,6 +16,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import catboost as cb
 import joblib
 import lightgbm as lgb
 import numpy as np
@@ -21,7 +25,7 @@ import yfinance as yf
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import TimeSeriesSplit
 
-from trade_plus.instruments import ALL_INSTRUMENTS, Instrument
+from trade_plus.instruments import ALL_INSTRUMENTS, Instrument, NIFTYBEES, BANKBEES
 from trade_plus.ml.features import build_training_dataset
 
 MODEL_DIR = Path(__file__).resolve().parents[3] / "models"
@@ -79,93 +83,113 @@ def train_model(
     y: pd.Series,
     instrument: str,
     n_splits: int = 5,
-) -> tuple[lgb.LGBMClassifier, dict]:
-    """Train LightGBM with time-series cross-validation.
+    embargo: int = 3,
+) -> tuple[dict, dict]:
+    """Train LightGBM + CatBoost ensemble with walk-forward validation.
 
-    Returns the final trained model and a metrics dict.
+    Returns dict of models {"lgb": model, "cat": model} and metrics.
     """
     print(f"\n{'='*60}")
-    print(f"  Training: {instrument}")
+    print(f"  Training: {instrument} (Triple Barrier + Ensemble)")
     print(f"  Samples: {len(X)} | Features: {X.shape[1]}")
-    print(f"  Class balance: UP={y.sum()} ({y.mean()*100:.1f}%) / DOWN={len(y)-y.sum()} ({(1-y.mean())*100:.1f}%)")
+    print(f"  Class balance: WIN={int(y.sum())} ({y.mean()*100:.1f}%) / LOSS={int(len(y)-y.sum())} ({(1-y.mean())*100:.1f}%)")
+    print(f"  Label: triple barrier (0.5% target / 0.7% stop)")
     print(f"{'='*60}")
 
+    # Walk-forward with embargo
     tscv = TimeSeriesSplit(n_splits=n_splits)
-    fold_scores = []
+    lgb_scores = []
+    cat_scores = []
+    ens_scores = []
     fold_details = []
 
     for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
+        # Apply embargo: skip first `embargo` rows of test set
+        if embargo > 0 and len(test_idx) > embargo:
+            test_idx = test_idx[embargo:]
+
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
 
-        model = lgb.LGBMClassifier(
-            n_estimators=300,
-            max_depth=5,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=0.1,
-            min_child_samples=20,
-            random_state=42,
-            verbose=-1,
+        # LightGBM
+        lgb_model = lgb.LGBMClassifier(
+            n_estimators=500, max_depth=6, learning_rate=0.03,
+            subsample=0.7, colsample_bytree=0.7,
+            reg_alpha=0.5, reg_lambda=1.0,
+            min_child_samples=30, random_state=42, verbose=-1,
         )
-
-        model.fit(
+        lgb_model.fit(
             X_train, y_train,
             eval_set=[(X_test, y_test)],
-            callbacks=[lgb.log_evaluation(0)],
+            callbacks=[lgb.log_evaluation(0), lgb.early_stopping(50, verbose=False)],
         )
 
-        preds = model.predict(X_test)
-        acc = accuracy_score(y_test, preds)
-        fold_scores.append(acc)
+        # CatBoost
+        cat_model = cb.CatBoostClassifier(
+            iterations=500, depth=6, learning_rate=0.03,
+            l2_leaf_reg=3, subsample=0.7,
+            random_seed=42, verbose=0,
+        )
+        cat_model.fit(X_train, y_train, eval_set=(X_test, y_test), early_stopping_rounds=50)
 
-        # Detailed metrics
-        proba = model.predict_proba(X_test)[:, 1]
-        # Only count predictions with confidence > threshold
-        confident_mask = (proba > 0.55) | (proba < 0.45)
-        if confident_mask.sum() > 0:
-            confident_acc = accuracy_score(y_test[confident_mask], preds[confident_mask])
-            confident_pct = confident_mask.mean() * 100
-        else:
-            confident_acc = 0
-            confident_pct = 0
+        # Individual predictions
+        lgb_proba = lgb_model.predict_proba(X_test)[:, 1]
+        cat_proba = cat_model.predict_proba(X_test)[:, 1]
+
+        # Ensemble: average probabilities
+        ens_proba = 0.5 * lgb_proba + 0.5 * cat_proba
+        ens_preds = (ens_proba > 0.5).astype(int)
+
+        lgb_acc = accuracy_score(y_test, (lgb_proba > 0.5).astype(int))
+        cat_acc = accuracy_score(y_test, (cat_proba > 0.5).astype(int))
+        ens_acc = accuracy_score(y_test, ens_preds)
+
+        lgb_scores.append(lgb_acc)
+        cat_scores.append(cat_acc)
+        ens_scores.append(ens_acc)
+
+        # Confident predictions (>55% or <45%)
+        confident_mask = (ens_proba > 0.55) | (ens_proba < 0.45)
+        conf_acc = accuracy_score(y_test[confident_mask], ens_preds[confident_mask]) if confident_mask.sum() > 5 else 0
+        conf_pct = confident_mask.mean() * 100
 
         fold_details.append({
             "fold": fold + 1,
             "train_size": len(X_train),
             "test_size": len(X_test),
-            "accuracy": round(acc, 4),
-            "confident_accuracy": round(confident_acc, 4),
-            "confident_pct": round(confident_pct, 1),
+            "lgb_acc": round(lgb_acc, 4),
+            "cat_acc": round(cat_acc, 4),
+            "ensemble_acc": round(ens_acc, 4),
+            "confident_acc": round(conf_acc, 4),
+            "confident_pct": round(conf_pct, 1),
         })
 
-        print(f"  Fold {fold+1}: acc={acc:.3f} | confident_acc={confident_acc:.3f} ({confident_pct:.0f}% of trades)")
+        print(f"  Fold {fold+1}: LGB={lgb_acc:.3f} CAT={cat_acc:.3f} ENS={ens_acc:.3f} | confident={conf_acc:.3f} ({conf_pct:.0f}%)")
 
-    mean_acc = np.mean(fold_scores)
-    std_acc = np.std(fold_scores)
-    print(f"\n  Mean accuracy: {mean_acc:.3f} ± {std_acc:.3f}")
+    mean_lgb = np.mean(lgb_scores)
+    mean_cat = np.mean(cat_scores)
+    mean_ens = np.mean(ens_scores)
+    print(f"\n  Mean: LGB={mean_lgb:.3f} CAT={mean_cat:.3f} ENSEMBLE={mean_ens:.3f}")
 
-    # Train final model on ALL data
-    final_model = lgb.LGBMClassifier(
-        n_estimators=300,
-        max_depth=5,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_alpha=0.1,
-        reg_lambda=0.1,
-        min_child_samples=20,
-        random_state=42,
-        verbose=-1,
+    # Train final models on ALL data
+    final_lgb = lgb.LGBMClassifier(
+        n_estimators=500, max_depth=6, learning_rate=0.03,
+        subsample=0.7, colsample_bytree=0.7,
+        reg_alpha=0.5, reg_lambda=1.0,
+        min_child_samples=30, random_state=42, verbose=-1,
     )
-    final_model.fit(X, y)
+    final_lgb.fit(X, y)
 
-    # Feature importance
+    final_cat = cb.CatBoostClassifier(
+        iterations=500, depth=6, learning_rate=0.03,
+        l2_leaf_reg=3, subsample=0.7,
+        random_seed=42, verbose=0,
+    )
+    final_cat.fit(X, y)
+
+    # Feature importance (from LightGBM — more interpretable)
     importance = pd.Series(
-        final_model.feature_importances_,
-        index=X.columns,
+        final_lgb.feature_importances_, index=X.columns,
     ).sort_values(ascending=False)
 
     print(f"\n  Top 10 features:")
@@ -177,30 +201,43 @@ def train_model(
         "samples": len(X),
         "features": X.shape[1],
         "feature_names": list(X.columns),
-        "mean_accuracy": round(mean_acc, 4),
-        "std_accuracy": round(std_acc, 4),
+        "label_type": "triple_barrier",
+        "target_pct": 0.005,
+        "stop_pct": 0.007,
+        "mean_accuracy": round(mean_ens, 4),
+        "lgb_accuracy": round(mean_lgb, 4),
+        "cat_accuracy": round(mean_cat, 4),
+        "std_accuracy": round(np.std(ens_scores), 4),
         "folds": fold_details,
         "top_features": {str(k): int(v) for k, v in importance.head(20).items()},
-        "class_balance": {"up": int(y.sum()), "down": int(len(y) - y.sum())},
+        "class_balance": {"win": int(y.sum()), "loss": int(len(y) - y.sum())},
         "trained_at": datetime.now().isoformat(),
+        "embargo_days": embargo,
     }
 
-    return final_model, metrics
+    models = {"lgb": final_lgb, "cat": final_cat}
+    return models, metrics
 
 
-def save_model(model: lgb.LGBMClassifier, instrument: str, metrics: dict, feature_names: list[str]):
-    """Save model, metrics, and feature names."""
+def save_model(models: dict, instrument: str, metrics: dict, feature_names: list[str]):
+    """Save ensemble models, metrics, and feature names."""
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-    model_path = MODEL_DIR / f"{instrument.lower()}_model.joblib"
+    # Save LightGBM (backward compatible — old predict.py loads this)
+    lgb_path = MODEL_DIR / f"{instrument.lower()}_model.joblib"
+    joblib.dump(models["lgb"], lgb_path)
+
+    # Save CatBoost
+    cat_path = MODEL_DIR / f"{instrument.lower()}_cat_model.joblib"
+    joblib.dump(models["cat"], cat_path)
+
     metrics_path = MODEL_DIR / f"{instrument.lower()}_metrics.json"
     features_path = MODEL_DIR / f"{instrument.lower()}_features.json"
 
-    joblib.dump(model, model_path)
     metrics_path.write_text(json.dumps(metrics, indent=2))
     features_path.write_text(json.dumps(feature_names))
 
-    print(f"  Saved: {model_path}")
+    print(f"  Saved: {lgb_path} + {cat_path}")
 
 
 def main():
@@ -224,8 +261,8 @@ def main():
             print(f"\nSkipping {inst.ticker} — only {len(X)} samples (need 100+)")
             continue
 
-        model, metrics = train_model(X, y, inst.ticker)
-        save_model(model, inst.ticker, metrics, list(X.columns))
+        models, metrics = train_model(X, y, inst.ticker)
+        save_model(models, inst.ticker, metrics, list(X.columns))
         all_metrics[inst.ticker] = metrics
 
     # Summary

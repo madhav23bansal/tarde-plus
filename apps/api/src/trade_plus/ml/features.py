@@ -203,9 +203,15 @@ def build_training_dataset(
     # Forward-fill global data (different trading calendars)
     X = X.ffill()
 
-    # Target: did price go UP in the next N days?
-    future_return = instrument_df["Close"].shift(-lookahead) / instrument_df["Close"] - 1
-    y = (future_return > 0).astype(int)
+    # Target: triple barrier labeling (matches actual trade setup)
+    y = triple_barrier_labels(
+        instrument_df["Close"],
+        instrument_df["High"],
+        instrument_df["Low"],
+        target_pct=0.005,   # 0.5% take profit (matches intraday.py)
+        stop_pct=0.007,     # 0.7% stop loss (matches intraday.py)
+        max_bars=lookahead,
+    )
 
     # Drop rows with NaN (warmup period + last N rows without future data)
     valid = X.notna().all(axis=1) & y.notna()
@@ -213,3 +219,55 @@ def build_training_dataset(
     y = y[valid]
 
     return X, y
+
+
+def triple_barrier_labels(
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    target_pct: float = 0.005,
+    stop_pct: float = 0.007,
+    max_bars: int = 1,
+) -> pd.Series:
+    """Triple barrier labeling — labels aligned with actual trade P&L.
+
+    Instead of "did price go up?", asks:
+    "Would a LONG trade with 0.5% target and 0.7% stop have won?"
+
+    This directly aligns the ML target with the trading strategy.
+    From: Marcos Lopez de Prado, "Advances in Financial Machine Learning"
+
+    Labels:
+        1 = hit take-profit first (winning trade)
+        0 = hit stop-loss first or expired at a loss (losing trade)
+    """
+    labels = pd.Series(index=close.index, dtype=float)
+
+    for i in range(len(close) - max_bars):
+        entry = close.iloc[i]
+        upper = entry * (1 + target_pct)
+        lower = entry * (1 - stop_pct)
+
+        hit_target = False
+        hit_stop = False
+
+        for j in range(i + 1, min(i + max_bars + 1, len(close))):
+            # Check if high touched target
+            if high.iloc[j] >= upper:
+                hit_target = True
+                break
+            # Check if low touched stop
+            if low.iloc[j] <= lower:
+                hit_stop = True
+                break
+
+        if hit_target:
+            labels.iloc[i] = 1
+        elif hit_stop:
+            labels.iloc[i] = 0
+        else:
+            # Expired: label by final return sign
+            final = close.iloc[min(i + max_bars, len(close) - 1)]
+            labels.iloc[i] = 1 if final > entry else 0
+
+    return labels

@@ -27,10 +27,11 @@ MODEL_DIR = Path(__file__).resolve().parents[3] / "models"
 
 
 class MLPredictor:
-    """Loads trained models and generates ML-based predictions."""
+    """Loads trained LightGBM + CatBoost ensemble and generates predictions."""
 
     def __init__(self) -> None:
-        self._models: dict[str, object] = {}
+        self._models: dict[str, object] = {}       # LightGBM models
+        self._cat_models: dict[str, object] = {}   # CatBoost models
         self._feature_names: dict[str, list[str]] = {}
         self._metrics: dict[str, dict] = {}
         self._loaded = False
@@ -42,12 +43,21 @@ class MLPredictor:
             return
 
         for model_file in MODEL_DIR.glob("*_model.joblib"):
+            # Skip CatBoost files (loaded separately)
+            if "_cat_model" in model_file.stem:
+                continue
+
             ticker = model_file.stem.replace("_model", "").upper()
             features_file = MODEL_DIR / f"{ticker.lower()}_features.json"
             metrics_file = MODEL_DIR / f"{ticker.lower()}_metrics.json"
+            cat_file = MODEL_DIR / f"{ticker.lower()}_cat_model.joblib"
 
             try:
                 self._models[ticker] = joblib.load(model_file)
+
+                # Load CatBoost if available
+                if cat_file.exists():
+                    self._cat_models[ticker] = joblib.load(cat_file)
 
                 if features_file.exists():
                     self._feature_names[ticker] = json.loads(features_file.read_text())
@@ -56,8 +66,10 @@ class MLPredictor:
                     self._metrics[ticker] = json.loads(metrics_file.read_text())
 
                 acc = self._metrics.get(ticker, {}).get("mean_accuracy", "?")
+                has_cat = "+" if ticker in self._cat_models else ""
                 logger.info("ml_model_loaded", instrument=ticker, accuracy=acc,
-                           features=len(self._feature_names.get(ticker, [])))
+                           features=len(self._feature_names.get(ticker, [])),
+                           ensemble=f"lgb{has_cat}cat" if has_cat else "lgb")
             except Exception as e:
                 logger.warning("ml_model_load_failed", instrument=ticker, error=str(e))
 
@@ -105,9 +117,21 @@ class MLPredictor:
         if missing:
             logger.debug("ml_features_missing", instrument=ticker, count=len(missing))
 
-        # Predict
+        # Predict (ensemble if CatBoost available)
         X = np.array([feature_vector])
-        proba = model.predict_proba(X)[0]  # [prob_down, prob_up]
+        lgb_proba = model.predict_proba(X)[0]  # [prob_down, prob_up]
+
+        cat_model = self._cat_models.get(ticker)
+        if cat_model is not None:
+            try:
+                cat_proba = cat_model.predict_proba(X)[0]
+                # Average ensemble
+                proba = 0.5 * lgb_proba + 0.5 * cat_proba
+            except Exception:
+                proba = lgb_proba
+        else:
+            proba = lgb_proba
+
         prob_up = proba[1]
         prob_down = proba[0]
 

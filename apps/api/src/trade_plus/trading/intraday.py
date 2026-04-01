@@ -57,6 +57,9 @@ class IntradayTrader:
         self.intraday: dict[str, dict] = {}
         self.round_trips: dict[str, int] = {}
         self.oi_data: dict = {}
+        self.oi_buildup: dict[str, str] = {}  # per-instrument OI buildup direction
+
+        self.day_volatility: dict[str, float] = {}
 
         # ORB tracking
         self._orb_prices: dict[str, list] = {}  # prices collected 9:15-9:30
@@ -110,6 +113,7 @@ class IntradayTrader:
                     oi.get("pcr", 0),
                     nifty_to_etf_ratio=inst.nifty_ratio,
                 )
+                self.oi_buildup[inst.ticker] = oi.get("oi_buildup", "neutral")
 
     def collect_orb_price(self, ticker: str, price: float) -> None:
         """Collect prices during 9:15-9:30 for ORB computation."""
@@ -216,15 +220,16 @@ class IntradayTrader:
         confirmations = 0
         confirm_reasons = []
 
-        # 1. VWAP position
+        # 1. VWAP position (skip if no data yet — don't penalize)
         vwap = ind.get("intraday_vwap", 0)
         above_vwap = ind.get("above_vwap", False)
-        if bias == Direction.LONG and above_vwap:
-            confirmations += 1
-            confirm_reasons.append(f"Above VWAP ({vwap:.2f})")
-        elif bias == Direction.SHORT and not above_vwap:
-            confirmations += 1
-            confirm_reasons.append(f"Below VWAP ({vwap:.2f})")
+        if vwap > 0:
+            if bias == Direction.LONG and above_vwap:
+                confirmations += 1
+                confirm_reasons.append(f"Above VWAP ({vwap:.2f})")
+            elif bias == Direction.SHORT and not above_vwap:
+                confirmations += 1
+                confirm_reasons.append(f"Below VWAP ({vwap:.2f})")
 
         # 2. Intraday RSI sanity
         rsi = ind.get("intraday_rsi", 50)
@@ -246,15 +251,22 @@ class IntradayTrader:
             confirmations += 1
             confirm_reasons.append(f"At PIVOT: {level.name}")
 
-        # 4. OI confirmation (for Nifty-based ETFs)
+        # 4. OI confirmation: buildup direction + PCR extremes
+        buildup = self.oi_buildup.get(instrument, "neutral")
+        if bias == Direction.LONG and buildup == "bullish":
+            confirmations += 1
+            confirm_reasons.append(f"OI buildup: bullish")
+        elif bias == Direction.SHORT and buildup == "bearish":
+            confirmations += 1
+            confirm_reasons.append(f"OI buildup: bearish")
+        # PCR extremes as secondary signal
         pcr = dl.pcr
-        if pcr > 0:
-            if bias == Direction.LONG and pcr > 1.0:
-                confirmations += 1
-                confirm_reasons.append(f"PCR={pcr:.2f} (bullish)")
-            elif bias == Direction.SHORT and pcr < 0.8:
-                confirmations += 1
-                confirm_reasons.append(f"PCR={pcr:.2f} (bearish)")
+        if pcr > 1.3 and bias == Direction.LONG:
+            confirmations += 1
+            confirm_reasons.append(f"PCR={pcr:.2f} (extreme bullish)")
+        elif pcr < 0.6 and bias == Direction.SHORT:
+            confirmations += 1
+            confirm_reasons.append(f"PCR={pcr:.2f} (extreme bearish)")
 
         # 5. Day type alignment
         if dl.day_type == "trending" and level.source == "orb":
@@ -313,9 +325,9 @@ class IntradayTrader:
         else:
             pnl_pct = (pos.entry_price - price) / pos.entry_price
 
-        # Dynamic stop/target based on day volatility
-        stop_pct = 0.005  # default 0.5%
-        target_pct = 0.008  # default 0.8%
+        # Stop/target (widened stop for noise, tighter target for realistic scalps)
+        stop_pct = 0.007  # 0.7% — room for intraday noise
+        target_pct = 0.005  # 0.5% — realistic scalp target
 
         # Check against next S/R level for target
         if dl:
@@ -334,7 +346,19 @@ class IntradayTrader:
             decision["reasons"] = [f"Take profit: {pnl_pct:.2%} >= {target_pct:.1%}"]
             return decision
 
-        # Stop loss
+        # Trailing stop: move to breakeven at 0.3%, trail at 0.4% behind HWM
+        hwm = pos.high_water_pnl_pct
+        if hwm >= 0.003:  # price moved 0.3% in our favor at some point
+            if hwm >= 0.005:
+                trailing_stop = hwm - 0.004  # trail 0.4% behind peak
+            else:
+                trailing_stop = 0.0  # breakeven
+            if pnl_pct <= trailing_stop:
+                decision["action"] = "EXIT"
+                decision["reasons"] = [f"Trailing stop: P&L {pnl_pct:.2%}, HWM {hwm:.2%}, trail at {trailing_stop:.2%}"]
+                return decision
+
+        # Hard stop loss
         if pnl_pct <= -stop_pct:
             decision["action"] = "EXIT"
             decision["reasons"] = [f"Stop loss: {pnl_pct:.2%} <= -{stop_pct:.1%}"]
@@ -347,7 +371,7 @@ class IntradayTrader:
             return decision
 
         decision["reasons"] = [
-            f"Holding {pos.side} — P&L: {pnl_pct:+.2%}",
+            f"Holding {pos.side} — P&L: {pnl_pct:+.2%} (HWM: {hwm:+.2%})",
             f"Stop: {stop_pct:.1%} | Target: {target_pct:.1%}",
         ]
         return decision

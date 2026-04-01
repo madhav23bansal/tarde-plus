@@ -69,7 +69,7 @@ SETFNIF50 = Instrument(
     approx_price=240.0,
 )
 
-ALL_INSTRUMENTS = [NIFTYBEES, BANKBEES, SETFNIF50]
+ALL_INSTRUMENTS = [NIFTYBEES, BANKBEES]  # SETFNIF50 removed: same index as NIFTYBEES, doubles risk
 INSTRUMENT_MAP = {i.ticker: i for i in ALL_INSTRUMENTS}
 
 # Which OI indices we need to fetch (deduplicated)

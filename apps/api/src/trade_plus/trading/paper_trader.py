@@ -82,6 +82,7 @@ class Position:
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
     charges_entry: float = 0.0
+    high_water_pnl_pct: float = 0.0  # best P&L % reached, for trailing stop
 
     def to_dict(self) -> dict:
         return {
@@ -124,8 +125,9 @@ class PaperTrader:
         capital: float = 50_000.0,
         leverage: float = 5.0,
         max_risk_pct: float = 0.02,      # 2% of capital per trade
-        min_confidence: float = 0.20,     # minimum prediction confidence to trade
+        min_confidence: float = 0.35,     # minimum prediction confidence to trade
         stop_loss_pct: float = 0.01,      # 1% stop loss
+        max_daily_loss: float = 5000.0,   # stop trading after this loss
         broker: str = "shoonya",
     ) -> None:
         self.starting_capital = capital
@@ -134,6 +136,7 @@ class PaperTrader:
         self.max_risk_pct = max_risk_pct
         self.min_confidence = min_confidence
         self.stop_loss_pct = stop_loss_pct
+        self.max_daily_loss = max_daily_loss
         self.broker = broker
 
         self.positions: dict[str, Position] = {}
@@ -163,6 +166,9 @@ class PaperTrader:
         """Decide whether to enter a trade."""
         if direction == Direction.FLAT:
             return False, "Signal is FLAT"
+
+        if self.day_pnl <= -self.max_daily_loss:
+            return False, f"Daily loss limit hit: Rs {self.day_pnl:.0f}"
 
         if confidence < self.min_confidence:
             return False, f"Confidence {confidence:.0%} below threshold {self.min_confidence:.0%}"
@@ -379,8 +385,11 @@ class PaperTrader:
                 pos.current_price = price
                 if pos.side == "LONG":
                     pos.unrealized_pnl = round((price - pos.entry_price) * pos.quantity, 2)
+                    pnl_pct = (price - pos.entry_price) / pos.entry_price
                 else:
                     pos.unrealized_pnl = round((pos.entry_price - price) * pos.quantity, 2)
+                    pnl_pct = (pos.entry_price - price) / pos.entry_price
+                pos.high_water_pnl_pct = max(pos.high_water_pnl_pct, pnl_pct)
 
     def check_stop_losses(self, prices: dict[str, float]) -> list[Order]:
         """Check and execute stop losses."""

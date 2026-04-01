@@ -1,6 +1,6 @@
 {
   "instrument": "NIFTYBEES",
-  "samples": 376,
+  "samples": 375,
   "features": 52,
   "feature_names": [
     "returns_1d",
@@ -56,75 +56,91 @@
     "days_to_expiry",
     "is_expiry_week"
   ],
-  "mean_accuracy": 0.5323,
-  "std_accuracy": 0.0559,
+  "label_type": "triple_barrier",
+  "target_pct": 0.005,
+  "stop_pct": 0.007,
+  "mean_accuracy": 0.5831,
+  "lgb_accuracy": 0.5864,
+  "cat_accuracy": 0.5525,
+  "std_accuracy": 0.0593,
   "folds": [
     {
       "fold": 1,
-      "train_size": 66,
-      "test_size": 62,
-      "accuracy": 0.5806,
-      "confident_accuracy": 0.5517,
-      "confident_pct": 93.5
+      "train_size": 65,
+      "test_size": 59,
+      "lgb_acc": 0.5593,
+      "cat_acc": 0.5085,
+      "ensemble_acc": 0.5593,
+      "confident_acc": 0.5517,
+      "confident_pct": 98.3
     },
     {
       "fold": 2,
-      "train_size": 128,
-      "test_size": 62,
-      "accuracy": 0.5484,
-      "confident_accuracy": 0.5517,
-      "confident_pct": 93.5
+      "train_size": 127,
+      "test_size": 59,
+      "lgb_acc": 0.661,
+      "cat_acc": 0.661,
+      "ensemble_acc": 0.661,
+      "confident_acc": 0.6667,
+      "confident_pct": 96.6
     },
     {
       "fold": 3,
-      "train_size": 190,
-      "test_size": 62,
-      "accuracy": 0.5968,
-      "confident_accuracy": 0.6034,
-      "confident_pct": 93.5
+      "train_size": 189,
+      "test_size": 59,
+      "lgb_acc": 0.5424,
+      "cat_acc": 0.4746,
+      "ensemble_acc": 0.5424,
+      "confident_acc": 0.5424,
+      "confident_pct": 100.0
     },
     {
       "fold": 4,
-      "train_size": 252,
-      "test_size": 62,
-      "accuracy": 0.4516,
-      "confident_accuracy": 0.4815,
-      "confident_pct": 87.1
+      "train_size": 251,
+      "test_size": 59,
+      "lgb_acc": 0.6441,
+      "cat_acc": 0.6102,
+      "ensemble_acc": 0.6441,
+      "confident_acc": 0.6415,
+      "confident_pct": 89.8
     },
     {
       "fold": 5,
-      "train_size": 314,
-      "test_size": 62,
-      "accuracy": 0.4839,
-      "confident_accuracy": 0.5091,
-      "confident_pct": 88.7
+      "train_size": 313,
+      "test_size": 59,
+      "lgb_acc": 0.5254,
+      "cat_acc": 0.5085,
+      "ensemble_acc": 0.5085,
+      "confident_acc": 0.5577,
+      "confident_pct": 88.1
     }
   ],
   "top_features": {
-    "global_nikkei_change": 126,
-    "volume_ratio": 123,
-    "global_hangseng_5d": 109,
-    "global_copper_change": 105,
-    "global_gold_5d": 97,
-    "bb_position": 92,
-    "atr_14": 92,
-    "global_crude_oil_5d": 85,
-    "rsi_14": 85,
-    "global_gold_silver_ratio": 85,
-    "global_us_10y_change": 82,
-    "returns_1d": 81,
-    "global_dxy_change": 78,
-    "global_dxy_5d": 77,
-    "global_copper_5d": 72,
-    "global_crude_oil_change": 70,
-    "global_usd_inr_change": 68,
-    "global_dow_change": 68,
-    "global_usd_inr_5d": 67,
-    "global_us_10y_5d": 65
+    "global_gold_5d": 195,
+    "returns_5d": 185,
+    "global_gold_silver_ratio": 179,
+    "global_us_10y_5d": 167,
+    "macd_histogram": 161,
+    "global_copper_change": 156,
+    "global_india_vix_change": 143,
+    "global_nasdaq_change": 140,
+    "global_nikkei_change": 131,
+    "global_gold_change": 128,
+    "global_sp500_change": 127,
+    "global_crude_oil_change": 123,
+    "global_dxy_5d": 119,
+    "global_copper_5d": 108,
+    "global_dxy_change": 105,
+    "global_us_10y_change": 105,
+    "global_dow_5d": 103,
+    "volume_ratio": 102,
+    "returns_1d": 98,
+    "global_silver_change": 94
   },
   "class_balance": {
-    "up": 179,
-    "down": 197
+    "win": 230,
+    "loss": 145
   },
-  "trained_at": "2026-03-30T06:19:06.583309"
+  "trained_at": "2026-04-01T18:07:53.522663",
+  "embargo_days": 3
 }

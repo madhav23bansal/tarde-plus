@@ -60,6 +60,38 @@ class SignalSnapshot:
     returns_5d: float = 0.0
     volume_ratio: float = 1.0
 
+    # News sentiment (free RSS + financial VADER)
+    news_score: float = 0.0         # -1 to +1 aggregate sentiment
+    news_magnitude: float = 0.0     # strength of sentiment
+    news_bullish: int = 0
+    news_bearish: int = 0
+    news_total: int = 0
+
+    # FII cumulative momentum
+    fii_5d: float = 0.0              # 5-day cumulative FII net
+    fii_10d: float = 0.0             # 10-day cumulative
+    fii_acceleration: float = 0.0     # is selling speeding up?
+    fii_consecutive: int = 0          # streak of same-direction days
+    fii_streak_direction: str = ""
+    fii_momentum_signal: str = "neutral"
+    fii_momentum_score: float = 0.0
+
+    # Gap prediction (pre-market signal)
+    predicted_gap_pct: float = 0.0    # predicted opening gap %
+    gap_direction: str = "flat"       # gap_up, gap_down, flat
+    gap_confidence: float = 0.0
+
+    # NSE enhanced data (free, scraped from NSE API)
+    ad_ratio: float = 0.0       # Nifty 50 advance/decline ratio
+    ad_advances: int = 0
+    ad_declines: int = 0
+    ad_breadth_pct: float = 0.0 # % of Nifty 50 stocks advancing
+    nse_vix: float = 0.0        # Real-time VIX from NSE (more accurate than yfinance)
+    nse_vix_change: float = 0.0
+    nifty_live: float = 0.0     # Live Nifty from NSE
+    banknifty_live: float = 0.0 # Live BankNifty from NSE
+    nifty_open: float = 0.0     # Today's Nifty open
+
     # Parallel AI sentiment (morning fetch, cached)
     ai_news_sentiment: float = 0.0
     ai_news_count: int = 0
@@ -109,7 +141,8 @@ class SignalSnapshot:
         """Convert to dict for BiasPredictor."""
         return {
             "sp500_change": self.sp500_change,
-            "india_vix": self.india_vix,
+            "india_vix": self.nse_vix if self.nse_vix > 0 else self.india_vix,
+            "india_vix_change": self.nse_vix_change if self.nse_vix > 0 else self.india_vix_change,
             "crude_oil_change": self.crude_oil_change,
             "fii_net": self.fii_net,
             "usd_inr_change": self.usd_inr_change,
@@ -117,6 +150,21 @@ class SignalSnapshot:
             "returns_1d": self.returns_1d,
             "returns_5d": self.returns_5d,
             "volume_ratio": self.volume_ratio,
+            "ad_ratio": self.ad_ratio,
+            "ad_breadth_pct": self.ad_breadth_pct,
+            "news_score": self.news_score,
+            "news_bullish": self.news_bullish,
+            "news_bearish": self.news_bearish,
+            "news_total": self.news_total,
+            "predicted_gap_pct": self.predicted_gap_pct,
+            "gap_direction": self.gap_direction,
+            "gap_confidence": self.gap_confidence,
+            "fii_5d": self.fii_5d,
+            "fii_10d": self.fii_10d,
+            "fii_acceleration": self.fii_acceleration,
+            "fii_consecutive": self.fii_consecutive,
+            "fii_streak_direction": self.fii_streak_direction,
+            "fii_momentum_score": self.fii_momentum_score,
         }
 
     def to_feature_dict(self) -> dict:
@@ -165,17 +213,111 @@ class SignalCollector:
         snap.returns_5d = tech.get("returns_5d", 0)
         snap.volume_ratio = tech.get("volume_ratio", 1)
 
-        # FII/DII (NSE)
+        # Gap prediction (pre-market signal — S&P futures + Asian markets)
+        try:
+            from trade_plus.market_data.gap_predictor import predict_gap
+            gap = await predict_gap()
+            snap.predicted_gap_pct = gap.gap_pct
+            snap.gap_direction = gap.direction
+            snap.gap_confidence = gap.confidence
+            snap.global_signals["gap_prediction"] = {
+                "gap_pct": gap.gap_pct,
+                "direction": gap.direction,
+                "confidence": gap.confidence,
+                "signals": gap.signals,
+            }
+        except Exception as e:
+            snap.errors.append(f"gap_predictor: {e}")
+
+        # News sentiment (free RSS feeds + financial lexicon)
+        try:
+            from trade_plus.market_data.news_sentiment import NewsFeedCollector
+            if not hasattr(self, '_news_collector'):
+                self._news_collector = NewsFeedCollector()
+            news = await self._news_collector.collect()
+            snap.news_score = news.score
+            snap.news_magnitude = news.magnitude
+            snap.news_bullish = news.bullish_count
+            snap.news_bearish = news.bearish_count
+            snap.news_total = news.total_articles
+            snap.ai_news_sentiment = news.score  # backward compat with dashboard
+            snap.ai_news_count = news.total_articles
+        except Exception as e:
+            snap.errors.append(f"news_sentiment: {e}")
+
+        # FII/DII (NSE — old endpoint, kept as fallback)
         fii = await self._fetch_fii_dii()
         snap.fii_net = fii.get("fii_net", 0)
         snap.dii_net = fii.get("dii_net", 0)
 
+        # FII cumulative momentum (5-day/10-day tracking)
+        try:
+            from trade_plus.market_data.fii_tracker import FIITracker
+            if not hasattr(self, '_fii_tracker'):
+                self._fii_tracker = FIITracker()
+            if snap.fii_net != 0:
+                self._fii_tracker.record(snap.fii_net, snap.dii_net)
+            momentum = self._fii_tracker.get_momentum(snap.fii_net, snap.dii_net)
+            snap.fii_5d = momentum.fii_5d
+            snap.fii_10d = momentum.fii_10d
+            snap.fii_acceleration = momentum.fii_acceleration
+            snap.fii_consecutive = momentum.fii_consecutive
+            snap.fii_streak_direction = momentum.fii_streak_direction
+            snap.fii_momentum_signal = momentum.signal
+            snap.fii_momentum_score = momentum.signal_score
+        except Exception as e:
+            snap.errors.append(f"fii_tracker: {e}")
+
+        # Free API aggregator (NewsAPI + Reddit — if keys configured)
+        try:
+            from trade_plus.market_data.free_apis import FreeDataAggregator
+            if not hasattr(self, '_free_apis'):
+                self._free_apis = FreeDataAggregator()
+            extra = await self._free_apis.collect_all()
+            if extra.get("blended_score"):
+                # Blend with RSS score (weighted average)
+                rss_weight = 0.6
+                api_weight = 0.4
+                snap.news_score = round(
+                    snap.news_score * rss_weight + extra["blended_score"] * api_weight, 4
+                ) if snap.news_score else extra["blended_score"]
+            snap.global_signals["free_apis"] = extra
+        except Exception as e:
+            snap.errors.append(f"free_apis: {e}")
+
+        # NSE enhanced data: A/D ratio, live VIX, market status
+        try:
+            from trade_plus.market_data.nse_client import get_nse_client
+            nse = get_nse_client()
+            nse_data = await nse.collect_all_enhanced()
+            if nse_data:
+                snap.ad_ratio = nse_data.get("ad_ratio", 0)
+                snap.ad_advances = nse_data.get("ad_advances", 0)
+                snap.ad_declines = nse_data.get("ad_declines", 0)
+                snap.ad_breadth_pct = nse_data.get("ad_breadth_pct", 0)
+                snap.nse_vix = nse_data.get("nse_vix", 0)
+                snap.nse_vix_change = nse_data.get("nse_vix_change", 0)
+                snap.nifty_live = nse_data.get("nifty_live", 0)
+                snap.banknifty_live = nse_data.get("banknifty_live", 0)
+                snap.nifty_open = nse_data.get("nifty_open", 0)
+                # Override FII/DII if NSE enhanced has it
+                if nse_data.get("fii_net"):
+                    snap.fii_net = nse_data["fii_net"]
+                if nse_data.get("dii_net"):
+                    snap.dii_net = nse_data["dii_net"]
+                logger.info("nse_enhanced_collected",
+                           ad_ratio=snap.ad_ratio, breadth=snap.ad_breadth_pct,
+                           nse_vix=snap.nse_vix, nifty_live=snap.nifty_live)
+        except Exception as e:
+            snap.errors.append(f"nse_enhanced: {e}")
+
         snap.collection_time_ms = round((time.time() - start) * 1000, 1)
 
         logger.info("signals_collected",
-                   sp500=snap.sp500_change, vix=snap.india_vix,
+                   sp500=snap.sp500_change, vix=snap.nse_vix or snap.india_vix,
                    crude=snap.crude_oil_change, fii=snap.fii_net,
-                   rsi=snap.rsi_14, ms=snap.collection_time_ms)
+                   rsi=snap.rsi_14, ad=snap.ad_ratio,
+                   ms=snap.collection_time_ms)
 
         return snap
 

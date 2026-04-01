@@ -166,9 +166,15 @@ def _build_predictions_payload() -> dict:
             entry["nse_data"] = {
                 "fii_net": _safe_float(snapshot.fii_net),
                 "dii_net": _safe_float(snapshot.dii_net),
-                "india_vix": _safe_float(snapshot.india_vix),
-                "india_vix_change": _safe_float(snapshot.india_vix_change),
-                "pcr_oi": 0, "ad_ratio": 0,
+                "india_vix": _safe_float(snapshot.nse_vix or snapshot.india_vix),
+                "india_vix_change": _safe_float(snapshot.nse_vix_change or snapshot.india_vix_change),
+                "pcr_oi": 0,
+                "ad_ratio": _safe_float(snapshot.ad_ratio),
+                "ad_breadth_pct": _safe_float(snapshot.ad_breadth_pct),
+                "ad_advances": snapshot.ad_advances,
+                "ad_declines": snapshot.ad_declines,
+                "nifty_live": _safe_float(snapshot.nifty_live),
+                "banknifty_live": _safe_float(snapshot.banknifty_live),
             }
             entry["sector_signals"] = {
                 "sp500_change": _safe_float(snapshot.sp500_change),
@@ -254,7 +260,7 @@ async def _collection_loop():
             collect_dur = round(time.time() - collect_start, 2)
 
             # Generate daily bias from signals (same bias applies to all Nifty-tracking ETFs)
-            bias = engine.predict(snapshot.to_bias_signals())
+            bias = engine.predict(snapshot.to_bias_signals(), full_snapshot=snapshot)
             predictions = [bias]
 
             run_id = uuid.uuid4()
@@ -408,8 +414,9 @@ async def _collection_loop():
                 if _state["db_status"]["timescaledb"]:
                     for ticker, snap in snapshot.instruments.items():
                         await _tsdb.insert_signal(run_id, sess_val, snap)
-                    for pred in predictions:
-                        await _tsdb.insert_prediction(run_id, sess_val, pred)
+                    for inst in ALL_INSTRUMENTS:
+                        for pred in predictions:
+                            await _tsdb.insert_prediction(run_id, sess_val, pred, inst.ticker)
                     await _tsdb.insert_pipeline_run(
                         run_id, sess_val, collect_dur, len(snapshot.instruments),
                     )
@@ -592,10 +599,10 @@ async def _price_monitor_loop():
                     pred = itrader.last_prediction.get(inst)
                     if pred and price_map.get(inst, 0) > 0:
                         decision = itrader.decide(inst, pred, price_map[inst])
-                        if decision.action == "EXIT":
+                        if decision["action"] == "EXIT":
                             order = itrader.execute(decision, price_map[inst], str(uuid.uuid4()))
                             if order:
-                                logger.info("monitor_exit", instrument=inst, reason=decision.reasons[0])
+                                logger.info("monitor_exit", instrument=inst, reason=decision["reasons"][0])
 
             # Broadcast live state
             if _ws_queues:

@@ -65,11 +65,12 @@ class BiasPredictor:
         except Exception:
             logger.info("bias_predictor", mode="rules_only")
 
-    def predict(self, signals: dict) -> DailyBias:
+    def predict(self, signals: dict, full_snapshot=None) -> DailyBias:
         """Generate daily bias from global signals.
 
         Args:
             signals: dict with keys like sp500_change, india_vix, crude_oil_change, etc.
+            full_snapshot: optional SignalSnapshot for ML — avoids creating an empty one.
         """
         bull = 0.0
         bear = 0.0
@@ -87,14 +88,19 @@ class BiasPredictor:
 
         # 2. India VIX regime (weight: 2)
         vix = signals.get("india_vix", 15)
-        if vix > 22:
-            # High fear — contrarian bullish (mean reversion)
-            bull += 2
-            reasons_bull.append(f"High VIX {vix:.0f} (contrarian)")
-        elif vix < 12:
-            # Low fear — complacency warning
-            bear += 1
-            reasons_bear.append(f"Low VIX {vix:.0f} (complacent)")
+        vix_change = signals.get("india_vix_change", 0)
+        if vix > 20:
+            # High VIX = fear = intraday momentum continues down
+            bear += 2
+            reasons_bear.append(f"High VIX {vix:.0f} (fear = sell momentum)")
+            # But if VIX is falling sharply from high, recovery underway
+            if vix_change < -5:
+                bull += 1
+                reasons_bull.append(f"VIX falling {vix_change:.1f}% (recovery)")
+        elif vix < 14:
+            # Low VIX = complacency = slow grind up
+            bull += 1
+            reasons_bull.append(f"Low VIX {vix:.0f} (calm, grind up)")
 
         # 3. Crude oil (weight: 2)
         crude = signals.get("crude_oil_change", 0)
@@ -105,14 +111,17 @@ class BiasPredictor:
             bull += 2
             reasons_bull.append(f"Crude {crude:.1f}% (bullish for India)")
 
-        # 4. FII/DII (weight: 3) — strongest Indian-specific signal
+        # 4. FII/DII (weight: up to 4) — proportional to flow magnitude
         fii = signals.get("fii_net", 0)
-        if fii > 1000:
-            bull += 3
-            reasons_bull.append(f"FII +{fii:.0f}Cr")
-        elif fii < -1000:
-            bear += 3
-            reasons_bear.append(f"FII {fii:.0f}Cr")
+        if abs(fii) > 500:
+            # Scale: 1000 Cr = 1 point. Cap at ±4.
+            fii_score = max(-4, min(4, fii / 1000))
+            if fii_score > 0:
+                bull += abs(fii_score)
+                reasons_bull.append(f"FII +{fii:.0f}Cr (w={abs(fii_score):.1f})")
+            else:
+                bear += abs(fii_score)
+                reasons_bear.append(f"FII {fii:.0f}Cr (w={abs(fii_score):.1f})")
 
         # 5. USD/INR (weight: 1)
         usdinr = signals.get("usd_inr_change", 0)
@@ -123,6 +132,56 @@ class BiasPredictor:
             bull += 1
             reasons_bull.append(f"INR strengthening {usdinr:.1f}%")
 
+        # 6. Advance/Decline breadth (weight: 2) — NEW
+        ad_ratio = signals.get("ad_ratio", 0)
+        breadth = signals.get("ad_breadth_pct", 0)
+        if ad_ratio > 0:
+            if breadth > 65:
+                # Strong breadth: >65% of Nifty 50 advancing
+                bull += 2
+                reasons_bull.append(f"Breadth {breadth:.0f}% advancing (A:D={ad_ratio:.1f})")
+            elif breadth < 35:
+                # Weak breadth: <35% advancing
+                bear += 2
+                reasons_bear.append(f"Breadth {breadth:.0f}% advancing (A:D={ad_ratio:.1f})")
+
+        # 7. News sentiment from RSS feeds (weight: 1.5)
+        news_score = signals.get("news_score", 0)
+        news_total = signals.get("news_total", 0)
+        if news_total >= 5 and abs(news_score) > 0.1:
+            news_weight = min(1.5, abs(news_score) * 3)  # scale 0-1.5
+            if news_score > 0.1:
+                bull += news_weight
+                reasons_bull.append(f"News sentiment +{news_score:.2f} ({news_total} articles)")
+            elif news_score < -0.1:
+                bear += news_weight
+                reasons_bear.append(f"News sentiment {news_score:.2f} ({news_total} articles)")
+
+        # 8. FII cumulative momentum (weight: up to 2)
+        fii_5d = signals.get("fii_5d", 0)
+        fii_momentum = signals.get("fii_momentum_score", 0)
+        fii_consec = signals.get("fii_consecutive", 0)
+        if abs(fii_momentum) > 0.05:
+            mom_weight = min(2, abs(fii_momentum) * 4)
+            if fii_momentum > 0:
+                bull += mom_weight
+                reasons_bull.append(f"FII momentum +{fii_5d:.0f}Cr/5d (streak {fii_consec}d)")
+            else:
+                bear += mom_weight
+                reasons_bear.append(f"FII momentum {fii_5d:.0f}Cr/5d (streak {fii_consec}d)")
+
+        # 9. Gap prediction from pre-market signals (weight: 2)
+        gap_pct = signals.get("predicted_gap_pct", 0)
+        gap_conf = signals.get("gap_confidence", 0)
+        if abs(gap_pct) > 0.3 and gap_conf > 0.2:
+            gap_weight = min(2, abs(gap_pct))  # cap at 2
+            if gap_pct > 0:
+                bull += gap_weight
+                reasons_bull.append(f"Gap prediction +{gap_pct:.2f}% ({gap_conf:.0%} conf)")
+            else:
+                bear += gap_weight
+                reasons_bear.append(f"Gap prediction {gap_pct:.2f}% ({gap_conf:.0%} conf)")
+
         # Compute rules score
         total = bull + bear
         rules_score = (bull - bear) / total if total > 0 else 0
@@ -131,15 +190,16 @@ class BiasPredictor:
         ml_score = 0.0
         if self._ml and self._ml.has_model("NIFTYBEES"):
             try:
-                # Build a minimal snapshot for ML
-                # NOTE: This is a simplified call — ML uses stored features
-                from trade_plus.market_data.signal_collector import SignalSnapshot
-                snap = SignalSnapshot(instrument="NIFTYBEES", sector="index")
-                # Copy available signals to snapshot fields
-                snap.rsi_14 = signals.get("rsi_14", 50)
-                snap.returns_1d = signals.get("returns_1d", 0)
-                snap.returns_5d = signals.get("returns_5d", 0)
-                snap.volume_ratio = signals.get("volume_ratio", 1)
+                if full_snapshot:
+                    # Use the real snapshot with all 52 features
+                    snap = full_snapshot
+                else:
+                    from trade_plus.market_data.signal_collector import SignalSnapshot
+                    snap = SignalSnapshot(instrument="NIFTYBEES", sector="index")
+                    snap.rsi_14 = signals.get("rsi_14", 50)
+                    snap.returns_1d = signals.get("returns_1d", 0)
+                    snap.returns_5d = signals.get("returns_5d", 0)
+                    snap.volume_ratio = signals.get("volume_ratio", 1)
                 _, ml_score, _, _ = self._ml.predict(snap)
             except Exception:
                 ml_score = 0

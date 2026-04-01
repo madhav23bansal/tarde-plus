@@ -96,7 +96,9 @@ class TimescaleStore:
 
     # ── Predictions ──────────────────────────────────────────────
 
-    async def insert_prediction(self, run_id: uuid.UUID, session: str, pred) -> None:
+    async def insert_prediction(self, run_id: uuid.UUID, session: str, pred, instrument: str | None = None) -> None:
+        inst = instrument or getattr(pred, 'instrument', 'NIFTYBEES')
+        features_used = getattr(pred, 'features_used', 5)
         await self.pool.execute(
             """
             INSERT INTO predictions (
@@ -104,8 +106,8 @@ class TimescaleStore:
                 features_used, reasons
             ) VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8)
             """,
-            run_id, session, pred.instrument, pred.direction.value,
-            pred.score, pred.confidence, pred.features_used,
+            run_id, session, inst, pred.direction.value,
+            pred.score, pred.confidence, features_used,
             pred.reasons,
         )
 
