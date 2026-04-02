@@ -331,7 +331,7 @@ export default function TradesPage() {
                 </thead>
                 <tbody>
                   {[...t.recent_orders].reverse().map((o: any, i: number) => {
-                    const time = o.placed_at ? new Date(o.placed_at * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) : "";
+                    const time = fmtTime(o.placed_at);
                     return (
                       <tr key={i} className="border-t border-zinc-800/10 hover:bg-zinc-800/10">
                         <td className="py-1 px-3 font-mono text-zinc-500">{time}</td>
@@ -363,6 +363,9 @@ export default function TradesPage() {
               <Calendar className="h-3 w-3 text-blue-500/60" />
               <span className="text-zinc-500 font-semibold uppercase tracking-wider">Trade History</span>
             </div>
+            <Link href="/trades/history" className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1">
+              Full History →
+            </Link>
           </div>
 
           {/* Cumulative stats strip */}
@@ -513,11 +516,26 @@ function SideBadge({ s }: { s: string }) {
   );
 }
 
+function fmtTime(v: any): string {
+  if (!v) return "";
+  if (typeof v === "string") return v; // already "HH:MM" from trade history
+  if (typeof v === "number" && v > 1e9) {
+    try { return new Date(v * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }); } catch { return ""; }
+  }
+  return String(v);
+}
+
+function calcHoldMin(entry: any, exit: any): string {
+  if (!entry || !exit) return "?";
+  if (typeof entry === "number" && typeof exit === "number" && entry > 1e9) return ((exit - entry) / 60).toFixed(0);
+  return "?";
+}
+
 function ClosedTradeRow({ trade }: { trade: any }) {
   const [open, setOpen] = useState(false);
-  const exitTime = trade.exit_time ? new Date(trade.exit_time * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) : "";
-  const entryTime = trade.entry_time ? new Date(trade.entry_time * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) : "";
-  const holdMin = trade.exit_time && trade.entry_time ? ((trade.exit_time - trade.entry_time) / 60).toFixed(0) : "?";
+  const exitTime = fmtTime(trade.exit_time);
+  const entryTime = fmtTime(trade.entry_time);
+  const holdMin = trade.hold_minutes ?? calcHoldMin(trade.entry_time, trade.exit_time);
   const invested = (trade.entry_price ?? 0) * (trade.quantity ?? 0);
   const returnPct = invested > 0 ? ((trade.net_pnl ?? 0) / invested * 100) : 0;
 
@@ -641,7 +659,7 @@ function DayRow({ day }: { day: any }) {
                 </thead>
                 <tbody>
                   {dayTrades.map((tr: any, i: number) => {
-                    const exitT = tr.exit_time ? new Date(tr.exit_time * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) : (tr.exit_at ?? "");
+                    const exitT = fmtTime(tr.exit_time) || tr.exit_at || "";
                     return (
                       <tr key={i} className="border-t border-zinc-800/5">
                         <td className="py-0.5 px-2 font-mono text-zinc-600">{exitT}</td>
