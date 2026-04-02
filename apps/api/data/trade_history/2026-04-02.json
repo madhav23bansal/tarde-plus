@@ -1,0 +1,28 @@
+{
+  "date": "2026-04-02",
+  "day_of_week": "Thursday",
+  "starting_capital": 50000.00,
+  "ending_capital": 49977.32,
+  "total_invested": 3861.38,
+  "total_trades": 6,
+  "wins": 0,
+  "losses": 6,
+  "win_rate_pct": 0.0,
+  "gross_pnl": -18.60,
+  "total_charges": 4.08,
+  "net_pnl": -22.68,
+  "return_on_invested_pct": -0.5874,
+  "return_on_capital_pct": -0.0454,
+  "avg_win": 0,
+  "avg_loss": -3.78,
+  "risk_reward": 0,
+  "max_drawdown_pct": 0.05,
+  "trades": [
+    {"instrument":"BANKBEES","side":"SHORT","quantity":1,"entry_price":516.87,"exit_price":520.60,"entry_value":516.87,"exit_value":520.60,"gross_pnl":-3.73,"charges":0.57,"net_pnl":-4.30,"return_pct":-0.83,"hold_minutes":42.5,"reason":"Stop loss -0.70%","entry_time":"09:38","exit_time":"10:20"},
+    {"instrument":"NIFTYBEES","side":"SHORT","quantity":3,"entry_price":252.23,"exit_price":254.18,"entry_value":756.69,"exit_value":762.54,"gross_pnl":-5.85,"charges":0.79,"net_pnl":-6.64,"return_pct":-0.88,"hold_minutes":55.0,"reason":"Stop loss -0.75%","entry_time":"09:38","exit_time":"10:33"},
+    {"instrument":"NIFTYBEES","side":"SHORT","quantity":3,"entry_price":254.43,"exit_price":256.28,"entry_value":763.29,"exit_value":768.84,"gross_pnl":-5.55,"charges":0.79,"net_pnl":-6.34,"return_pct":-0.83,"hold_minutes":65.0,"reason":"Stop loss -0.71%","entry_time":"10:45","exit_time":"11:50"},
+    {"instrument":"BANKBEES","side":"SHORT","quantity":1,"entry_price":524.87,"exit_price":528.99,"entry_value":524.87,"exit_value":528.99,"gross_pnl":-4.12,"charges":0.57,"net_pnl":-4.69,"return_pct":-0.89,"hold_minutes":70.0,"reason":"Stop loss -0.76%","entry_time":"11:00","exit_time":"12:10"},
+    {"instrument":"BANKBEES","side":"SHORT","quantity":1,"entry_price":530.25,"exit_price":530.10,"entry_value":530.25,"exit_value":530.10,"gross_pnl":0.15,"charges":0.57,"net_pnl":-0.42,"return_pct":-0.08,"hold_minutes":145.0,"reason":"Time exit: profit 0.05%","entry_time":"12:15","exit_time":"14:40"},
+    {"instrument":"NIFTYBEES","side":"SHORT","quantity":3,"entry_price":256.47,"exit_price":256.30,"entry_value":769.41,"exit_value":768.90,"gross_pnl":0.51,"charges":0.79,"net_pnl":-0.28,"return_pct":-0.04,"hold_minutes":130.0,"reason":"Time exit: profit 0.09%","entry_time":"12:30","exit_time":"14:40"}
+  ]
+}

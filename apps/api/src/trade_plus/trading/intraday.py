@@ -60,6 +60,8 @@ class IntradayTrader:
         self.oi_buildup: dict[str, str] = {}  # per-instrument OI buildup direction
 
         self.day_volatility: dict[str, float] = {}
+        self.consecutive_losses: int = 0       # streak of losing trades
+        self.price_history: dict[str, list] = {}  # recent prices for momentum check
 
         # ORB tracking
         self._orb_prices: dict[str, list] = {}  # prices collected 9:15-9:30
@@ -143,6 +145,13 @@ class IntradayTrader:
         """Make a trading decision. Returns decision dict for dashboard + execution."""
         self.last_prediction[instrument] = prediction
         t = self._time()
+
+        # Track price history for momentum check (keep last 20 prices per instrument)
+        if instrument not in self.price_history:
+            self.price_history[instrument] = []
+        self.price_history[instrument].append(price)
+        if len(self.price_history[instrument]) > 20:
+            self.price_history[instrument] = self.price_history[instrument][-20:]
         dl = self.levels.get(instrument)
         ind = self.intraday.get(instrument, {})
         pos = self.trader.positions.get(instrument)
@@ -194,11 +203,31 @@ class IntradayTrader:
             decision["reasons"] = [f"Max {self.max_round_trips} round-trips for {instrument}"]
             return decision
 
+        # Consecutive loss protection: after 3 losses, stop trading
+        if self.consecutive_losses >= 3:
+            decision["reasons"] = [f"Consecutive loss limit: {self.consecutive_losses} losses in a row — cooling off"]
+            return decision
+
         # Direction bias
         bias = self.bias.get(instrument, Direction.FLAT)
         if bias == Direction.FLAT:
             decision["reasons"] = ["Bias is FLAT — no trade"]
             return decision
+
+        # Intraday momentum check: don't SHORT if price is making higher highs
+        hist = self.price_history.get(instrument, [])
+        if len(hist) >= 6:
+            recent_3 = hist[-3:]
+            prev_3 = hist[-6:-3]
+            recent_avg = sum(recent_3) / 3
+            prev_avg = sum(prev_3) / 3
+            momentum_pct = (recent_avg - prev_avg) / prev_avg * 100
+            if bias == Direction.SHORT and momentum_pct > 0.15:
+                decision["reasons"] = [f"Momentum conflict: bias SHORT but price rising +{momentum_pct:.2f}% (waiting for reversal)"]
+                return decision
+            if bias == Direction.LONG and momentum_pct < -0.15:
+                decision["reasons"] = [f"Momentum conflict: bias LONG but price falling {momentum_pct:.2f}% (waiting for reversal)"]
+                return decision
 
         # ── THE KEY: Is price at a level? ──
         level = dl.at_level(price, self.level_proximity_pct)
@@ -388,6 +417,11 @@ class IntradayTrader:
             order = self.trader._close_position(instrument, price, decision["reasons"][0])
             if order:
                 self.round_trips[instrument] = self.round_trips.get(instrument, 0) + 1
+                # Track consecutive losses for cooling off
+                if order.pnl < 0:
+                    self.consecutive_losses += 1
+                else:
+                    self.consecutive_losses = 0  # reset on any win
             return order
 
         if action == "ENTER_LONG":

@@ -512,11 +512,18 @@ async def _price_monitor_loop():
             session = get_session()
 
             if session not in (MarketSession.REGULAR, MarketSession.PRE_OPEN, MarketSession.CLOSING):
-                # After market: square off any remaining positions
+                # After market: square off any remaining positions and save daily result
                 if session == MarketSession.POST_MARKET and trader.positions:
                     prices = {t: p.price for t, p in (_state.get("last_prices") or {}).items()}
                     if prices:
                         trader.square_off_all(prices)
+                if session == MarketSession.POST_MARKET and trader.closed_trades and not _state.get("daily_saved"):
+                    try:
+                        from trade_plus.trading.trade_history import save_daily_result
+                        save_daily_result(trader, trader.closed_trades)
+                        _state["daily_saved"] = True
+                    except Exception as e:
+                        logger.warning("daily_save_failed", error=str(e))
                         logger.info("eod_squareoff")
                 await asyncio.sleep(30)
                 continue
@@ -932,6 +939,31 @@ async def get_history():
 @app.get("/api/activity")
 async def get_activity():
     return {"activity": _state["activity_log"]}
+
+@app.get("/api/trade-history")
+async def get_trade_history():
+    """All daily trading results with cumulative stats."""
+    from trade_plus.trading.trade_history import get_cumulative_stats
+    return get_cumulative_stats()
+
+@app.get("/api/trade-history/{date}")
+async def get_trade_history_day(date: str):
+    """Detailed trades for a specific day (YYYY-MM-DD)."""
+    from trade_plus.trading.trade_history import get_daily_result
+    result = get_daily_result(date)
+    if result:
+        return result
+    return {"error": f"No trade data for {date}"}
+
+@app.post("/api/trade-history/save")
+async def save_trade_history_now():
+    """Manually save today's trading result (for testing)."""
+    trader = _state.get("paper_trader")
+    if not trader:
+        return {"error": "Paper trader not initialized"}
+    from trade_plus.trading.trade_history import save_daily_result
+    result = save_daily_result(trader, trader.closed_trades)
+    return result
 
 @app.get("/api/accuracy/{instrument}")
 async def get_accuracy(instrument: str, days: int = 30):
